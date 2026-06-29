@@ -1,36 +1,133 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Talat — The Power of Three
 
-## Getting Started
+Online multiplayer implementation of **Talat**, the strategic three-player board game by Bruce Whitehill (HUCH! & friends, 2011).
 
-First, run the development server:
+Built with **Next.js** (Vercel) and **Convex** for real-time multiplayer sync.
+
+## Features
+
+- 3-player online games via shareable invite links
+- Anonymous play with display names (no sign-in required)
+- Full rules engine: setup, movement, capture hierarchy, frozen boards, scoring
+- Real-time board updates across all players
+- Dark/gold UI inspired by the rulebook
+
+## Quick start
+
+### Prerequisites
+
+- Node.js 18+
+- npm
+
+### Local development
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Start Convex (in one terminal):
+
+```bash
+npx convex dev
+```
+
+This creates/updates `.env.local` with `NEXT_PUBLIC_CONVEX_URL`.
+
+3. Start Next.js (in another terminal):
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+4. Open [http://localhost:3000](http://localhost:3000)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### How to play online
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. **Player 1** creates a game and shares the invite link
+2. **Players 2 & 3** open the link (or enter the 6-character code on the home page)
+3. Host clicks **Start game** when all 3 seats are filled
+4. **Setup:** take turns placing your 9 towers on starting rows
+5. **Play:** move one tower per turn on any non-frozen board
+6. Game ends when **2 of 3 boards are frozen** — highest score wins
 
-## Learn More
+## Game rules (summary)
 
-To learn more about Next.js, take a look at the following resources:
+### Towers
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Each player has 9 unique towers combining:
+- **Heights:** Small, Medium, Large
+- **Shapes:** Triangle (3), Square (4), Hexagon (6)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Movement
 
-## Deploy on Vercel
+- Move one space **forward** or **forward-diagonal** toward the opponent's side
+- No backward or horizontal moves (except sideways captures on the opponent's starting line)
+- Cannot jump over other towers
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Capturing
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Size:** Large → Medium, Medium → Small (exactly one level)
+- **Same height:** more sides beats fewer (Hexagon > Square > Triangle)
+- **David & Goliath:** Small Triangle captures Large Hexagon
+- Capturing is optional
+
+### Scoring
+
+- **5 points** per captured tower
+- **3 points** per tower on the opponent's starting line at game end
+- Tie-breaker: highest-rank capture wins; full tie = draw
+
+### Frozen boards
+
+A board freezes when no captures are theoretically possible. The game ends when 2 of 3 boards freeze.
+
+## Project structure
+
+```
+app/                  Next.js App Router pages
+components/game/      Board UI, towers, lobby, scoreboard
+convex/               Convex schema, mutations, queries
+lib/game/             Pure TypeScript rules engine (+ Vitest tests)
+lib/playerStorage.ts  localStorage session for anonymous players
+```
+
+## Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start Next.js dev server |
+| `npx convex dev` | Start Convex dev backend |
+| `npm run build` | Production build |
+| `npm test` | Run rules engine unit tests |
+| `npx convex deploy` | Deploy Convex to production |
+
+## Deployment
+
+### Convex (production backend)
+
+```bash
+npx convex login
+npx convex deploy
+```
+
+Copy the production `NEXT_PUBLIC_CONVEX_URL` from the Convex dashboard.
+
+### Vercel (frontend)
+
+1. Push to GitHub and import the repo in Vercel
+2. Set environment variable: `NEXT_PUBLIC_CONVEX_URL` = your Convex production URL
+3. Deploy
+
+## Testing
+
+```bash
+npm test
+```
+
+Unit tests cover capture rules, movement, setup flow, frozen-board detection, and tie-breaker scoring.
+
+## License
+
+This is an unofficial fan implementation for educational purposes. Talat is © Bruce Whitehill / Hutter Trade GmbH + Co KG.

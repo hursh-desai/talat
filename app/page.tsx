@@ -1,65 +1,144 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { useMutation } from "convex/react";
+import { toast } from "sonner";
+import { api } from "@/convex/_generated/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { savePlayerSessionByCode } from "@/lib/playerStorage";
+
+export default function HomePage() {
+  const router = useRouter();
+  const createGame = useMutation(api.games.createGame);
+  const joinGame = useMutation(api.games.joinGame);
+  const [displayName, setDisplayName] = useState("");
+  const [joinCode, setJoinCode] = useState("");
+  const [loading, setLoading] = useState<"create" | "join" | null>(null);
+
+  async function handleCreate() {
+    const name = displayName.trim();
+    if (!name) {
+      toast.error("Enter a display name");
+      return;
+    }
+    setLoading("create");
+    try {
+      const result = await createGame({ displayName: name });
+      savePlayerSessionByCode(
+        result.code,
+        result.gameId,
+        result.playerToken,
+        result.slot,
+      );
+      router.push(`/game/${result.code}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to create game");
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function handleJoin() {
+    const name = displayName.trim();
+    const code = joinCode.trim().toUpperCase();
+    if (!name) {
+      toast.error("Enter a display name");
+      return;
+    }
+    if (!code) {
+      toast.error("Enter a game code");
+      return;
+    }
+    setLoading("join");
+    try {
+      const result = await joinGame({ code, displayName: name });
+      savePlayerSessionByCode(
+        code,
+        result.gameId,
+        result.playerToken,
+        result.slot,
+      );
+      router.push(`/game/${code}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to join game");
+    } finally {
+      setLoading(null);
+    }
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+    <div className="flex flex-1 flex-col items-center justify-center px-4 py-16">
+      <div className="mb-10 text-center">
+        <h1 className="text-4xl font-bold tracking-tight text-[#c9a227] sm:text-5xl">
+          Talat
+        </h1>
+        <p className="mt-2 text-lg text-white/60">The Power of Three</p>
+        <p className="mt-1 text-sm text-white/40">
+          A strategic board game for three players
+        </p>
+      </div>
+
+      <Card className="w-full max-w-md border-[#c9a227]/30 bg-black/60">
+        <CardHeader>
+          <CardTitle className="text-white">Play online</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm text-white/70">
+              Display name
+            </label>
+            <Input
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="Your name"
+              className="border-white/20 bg-black/40"
+              maxLength={24}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+          </div>
+
+          <Button
+            className="w-full bg-[#c9a227] text-black hover:bg-[#d4b23a]"
+            disabled={loading !== null}
+            onClick={handleCreate}
           >
-            Documentation
-          </a>
-        </div>
-      </main>
+            {loading === "create" ? "Creating…" : "Create new game"}
+          </Button>
+
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t border-white/10" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-[#111] px-2 text-white/40">or join</span>
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm text-white/70">
+              Game code
+            </label>
+            <Input
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+              placeholder="ABC123"
+              className="border-white/20 bg-black/40 font-mono uppercase"
+              maxLength={6}
+            />
+          </div>
+
+          <Button
+            variant="outline"
+            className="w-full border-[#c9a227]/50"
+            disabled={loading !== null}
+            onClick={handleJoin}
+          >
+            {loading === "join" ? "Joining…" : "Join game"}
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   );
 }
