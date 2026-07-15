@@ -2,18 +2,16 @@ import type { PlacedTower, PlayerSlot, TowerSpec } from "@/lib/game/types";
 
 const SLOT_STYLES: Record<
   PlayerSlot,
-  { fill: string; stroke: string; text: string; label: string }
+  { fill: string; stroke: string; label: string }
 > = {
-  0: { fill: "#1a1a1a", stroke: "#c9a227", text: "#f8e7a3", label: "Black" },
-  1: { fill: "#f5f5f5", stroke: "#888", text: "#171717", label: "White" },
-  2: { fill: "#6b7280", stroke: "#c9a227", text: "#ffffff", label: "Grey" },
+  0: { fill: "#1a1a1a", stroke: "#c9a227", label: "Black" },
+  1: { fill: "#f5f5f5", stroke: "#888", label: "White" },
+  2: { fill: "#6b7280", stroke: "#c9a227", label: "Grey" },
 };
 
-function shapeSize(height: TowerSpec["height"], displaySize: "sm" | "md"): number {
-  if (displaySize === "sm") {
-    return height === 1 ? 20 : height === 2 ? 26 : 32;
-  }
-  return height === 1 ? 28 : height === 2 ? 36 : 44;
+function strokeWidth(height: TowerSpec["height"], displaySize: "sm" | "md"): number {
+  const widths = height === 1 ? 2.5 : height === 2 ? 5 : 8;
+  return displaySize === "sm" ? widths * 0.72 : widths;
 }
 
 function heightLabel(height: TowerSpec["height"]): string {
@@ -25,39 +23,42 @@ function ShapeSilhouette({
   size,
   fill,
   stroke,
+  strokeWidth,
 }: {
   sides: TowerSpec["sides"];
   size: number;
   fill: string;
   stroke: string;
+  strokeWidth: number;
 }) {
+  const inset = strokeWidth / 2 + 2;
   if (sides === 3) {
     return (
       <polygon
-        points={`${size / 2},2 ${size - 2},${size - 3} 2,${size - 3}`}
+        points={`${size / 2},${inset} ${size - inset},${size - inset} ${inset},${size - inset}`}
         fill={fill}
         stroke={stroke}
         strokeLinejoin="round"
-        strokeWidth={2}
+        strokeWidth={strokeWidth}
       />
     );
   }
   if (sides === 4) {
     return (
       <rect
-        x="3"
-        y="3"
-        width={size - 6}
-        height={size - 6}
+        x={inset}
+        y={inset}
+        width={size - inset * 2}
+        height={size - inset * 2}
         fill={fill}
         stroke={stroke}
-        strokeWidth={2}
+        strokeWidth={strokeWidth}
       />
     );
   }
   const cx = size / 2;
   const cy = size / 2;
-  const r = size / 2 - 3;
+  const r = size / 2 - inset;
   const points = Array.from({ length: 6 }, (_, i) => {
     const angle = (Math.PI / 3) * i - Math.PI / 6;
     return `${cx + r * Math.cos(angle)},${cy + r * Math.sin(angle)}`;
@@ -68,7 +69,7 @@ function ShapeSilhouette({
       fill={fill}
       stroke={stroke}
       strokeLinejoin="round"
-      strokeWidth={2}
+      strokeWidth={strokeWidth}
     />
   );
 }
@@ -84,9 +85,7 @@ export function TowerPiece({ tower, slot, size = "md" }: TowerPieceProps) {
     "ownerSlot" in tower ? (tower.ownerSlot as PlayerSlot) : slot ?? 0;
   const style = SLOT_STYLES[ownerSlot];
   const canvasSize = size === "sm" ? 36 : 52;
-  const silhouetteSize = shapeSize(tower.height, size);
-  const offset = (canvasSize - silhouetteSize) / 2;
-  const fontSize = size === "sm" ? 11 : 14;
+  const shapeStrokeWidth = strokeWidth(tower.height, size);
 
   return (
     <svg
@@ -96,27 +95,13 @@ export function TowerPiece({ tower, slot, size = "md" }: TowerPieceProps) {
       className="mx-auto"
       aria-label={`${style.label} ${heightLabel(tower.height)} ${tower.sides}-sided piece`}
     >
-      <g transform={`translate(${offset}, ${offset})`}>
-        <ShapeSilhouette
-          sides={tower.sides}
-          size={silhouetteSize}
-          fill={style.fill}
-          stroke={style.stroke}
-        />
-      </g>
-      <text
-        x={canvasSize / 2}
-        y={canvasSize / 2 + fontSize * 0.34}
-        textAnchor="middle"
-        fontSize={fontSize}
-        fontWeight={800}
-        fill={style.text}
-        stroke={ownerSlot === 1 ? "transparent" : "rgba(0,0,0,0.45)"}
-        strokeWidth={ownerSlot === 1 ? 0 : 0.75}
-        paintOrder="stroke"
-      >
-        {tower.sides}
-      </text>
+      <ShapeSilhouette
+        sides={tower.sides}
+        size={canvasSize}
+        fill={style.fill}
+        stroke={style.stroke}
+        strokeWidth={shapeStrokeWidth}
+      />
     </svg>
   );
 }

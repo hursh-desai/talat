@@ -189,7 +189,7 @@ function TowerSet() {
         ))}
       </div>
       <p className="mt-3 text-xs text-white/45">
-        Each size comes as a 3-sided, 4-sided, and 6-sided piece.
+        Shape shows sides. Line weight shows size.
       </p>
     </div>
   );
