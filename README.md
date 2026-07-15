@@ -53,36 +53,36 @@ npm run dev
 1. **Player 1** creates a game and shares the invite link
 2. **Players 2 & 3** open the link (or enter the 6-character code on the home page)
 3. Host clicks **Start game** when all 3 seats are filled
-4. **Setup:** take turns placing your 9 towers on starting rows
-5. **Play:** move one tower per turn on any non-frozen board
+4. **Setup:** take turns placing your 9 pieces on starting rows
+5. **Play:** move one piece per turn on any non-frozen board
 6. Use the event feed to review previous positions while waiting
 7. Game ends when **2 of 3 boards are frozen** — highest score wins
 
 ## Game rules (summary)
 
-### Towers
+### Pieces
 
-Each player has 9 unique towers combining:
+Each player has 9 unique pieces combining:
 - **Heights:** Small, Medium, Large
-- **Shapes:** Triangle (3), Square (4), Hexagon (6)
+- **Sides:** 3-sided, 4-sided, 6-sided
 
 ### Movement
 
 - Move one space **forward** or **forward-diagonal** toward the opponent's side
 - No backward or horizontal moves (except sideways captures on the opponent's starting line)
-- Cannot jump over other towers
+- Cannot jump over other pieces
 
 ### Capturing
 
 - **Size:** Large → Medium, Medium → Small (exactly one level)
-- **Same height:** more sides beats fewer (Hexagon > Square > Triangle)
-- **David & Goliath:** Small Triangle captures Large Hexagon
+- **Same size:** more sides beats fewer (6 > 4 > 3)
+- **David & Goliath:** Small 3-sided captures Large 6-sided
 - Capturing is optional
 
 ### Scoring
 
-- **5 points** per captured tower
-- **3 points** per tower on the opponent's starting line at game end
+- **5 points** per captured piece
+- **3 points** per piece on the opponent's starting line at game end
 - Tie-breaker: highest-rank capture wins; full tie = draw
 
 ### Frozen boards
@@ -93,7 +93,7 @@ A board freezes when no captures are theoretically possible. The game ends when 
 
 ```
 app/                  Next.js App Router pages
-components/game/      Board UI, towers, lobby, scoreboard
+components/game/      Board UI, pieces, lobby, scoreboard
 convex/               Convex schema, mutations, queries
 lib/game/             Pure TypeScript rules engine (+ Vitest tests)
 lib/playerStorage.ts  localStorage session for anonymous players

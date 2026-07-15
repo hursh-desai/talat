@@ -84,7 +84,5 @@ export function determineWinner(
 
 export function rankLabel(tower: TowerSpec): string {
   const height = tower.height === 1 ? "Small" : tower.height === 2 ? "Medium" : "Large";
-  const sides =
-    tower.sides === 3 ? "Triangle" : tower.sides === 4 ? "Square" : "Hexagon";
-  return `${height} ${sides}`;
+  return `${height} ${tower.sides}-sided`;
 }

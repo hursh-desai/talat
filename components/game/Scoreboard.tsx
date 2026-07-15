@@ -44,7 +44,7 @@ export function Scoreboard({
         );
       })}
       <p className="col-span-full text-center text-xs text-white/40">
-        +{END_LINE_POINTS} pts per tower on opponent&apos;s starting line at game end
+        +{END_LINE_POINTS} pts per piece on opponent&apos;s starting line at game end
       </p>
     </div>
   );

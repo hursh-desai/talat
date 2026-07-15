@@ -11,17 +11,17 @@ const TABS = [
     id: "place",
     label: "Place",
     icon: Flag,
-    headline: "Choose a front for each tower.",
+    headline: "Choose a front for each piece.",
     body:
-      "During setup, pick a tower, then click a highlighted starting-row space on one of your two boards. You have nine towers and ten starting spaces, so one space stays empty.",
+      "During setup, pick a piece, then click a highlighted starting-row space on one of your two boards. You have nine pieces and ten starting spaces, so one space stays empty.",
   },
   {
     id: "move",
     label: "Move",
     icon: Footprints,
-    headline: "Move one tower, on one board.",
+    headline: "Move one piece, on one board.",
     body:
-      "On your turn, click one of your highlighted towers. Empty moves go one square forward or diagonally forward. The app then highlights every legal destination.",
+      "On your turn, click one of your highlighted pieces. Empty moves go one square forward or diagonally forward. The app then highlights every legal destination.",
   },
   {
     id: "capture",
@@ -29,7 +29,7 @@ const TABS = [
     icon: Swords,
     headline: "Capture only when the matchup works.",
     body:
-      "A capture can go forward, diagonally forward, or sideways onto an adjacent enemy tower. The game explains each legal capture before you commit it.",
+      "A capture can go forward, diagonally forward, or sideways onto an adjacent enemy piece. The game explains each legal capture before you commit it.",
   },
   {
     id: "score",
@@ -37,7 +37,7 @@ const TABS = [
     icon: Trophy,
     headline: "Win by captures and breakthroughs.",
     body:
-      "Captured towers are worth 5 points. Your towers on an opponent's starting row are worth 3 points. The game ends after two boards can never produce another capture.",
+      "Captured pieces are worth 5 points. Your pieces on an opponent's starting row are worth 3 points. The game ends after two boards can never produce another capture.",
   },
 ] as const;
 
@@ -170,7 +170,7 @@ function BoardPill({ label }: { label: string }) {
 function TowerSet() {
   return (
     <div className="rounded-lg border border-white/10 bg-black/20 p-4">
-      <p className="text-xs uppercase text-white/40">Your nine towers</p>
+      <p className="text-xs uppercase text-white/40">Your nine pieces</p>
       <div className="mt-3 grid grid-cols-3 gap-3">
         {towerSamples.map((tower) => (
           <div
@@ -189,7 +189,7 @@ function TowerSet() {
         ))}
       </div>
       <p className="mt-3 text-xs text-white/45">
-        Each height comes as a triangle, square, and hexagon.
+        Each size comes as a 3-sided, 4-sided, and 6-sided piece.
       </p>
     </div>
   );
@@ -200,9 +200,9 @@ function CaptureMatchups() {
     <div className="rounded-lg border border-white/10 bg-black/20 p-4">
       <p className="text-xs uppercase text-white/40">Capture shortcuts</p>
       <div className="mt-3 space-y-2 text-sm text-white/70">
-        <RuleLine label="Height" text="Large beats Medium. Medium beats Small." />
-        <RuleLine label="Shape" text="At equal height, more sides wins." />
-        <RuleLine label="Twist" text="Small Triangle beats Large Hexagon." />
+        <RuleLine label="Size" text="Large beats Medium. Medium beats Small." />
+        <RuleLine label="Sides" text="At equal size, more sides wins." />
+        <RuleLine label="Twist" text="Small 3-sided beats Large 6-sided." />
       </div>
     </div>
   );

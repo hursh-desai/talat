@@ -338,7 +338,7 @@ export function GameView({
       {status === "setup" && viewer !== null && isMyTurn && (
         <div className="mx-auto max-w-3xl">
           <p className="mb-2 text-center text-sm text-white/60">
-            Select a tower to place on your starting line
+            Select a piece to place on your starting line
           </p>
           <div className="flex flex-wrap justify-center gap-2">
             {playState.boardState.reserves[viewer].map((tower) => (
@@ -367,7 +367,7 @@ export function GameView({
 
       {status === "playing" && isMyTurn && !selection && (
         <p className="text-center text-sm text-white/60">
-          Click one of your towers to move
+          Click one of your pieces to move
         </p>
       )}
 

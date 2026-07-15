@@ -12,14 +12,14 @@ export function captureResult(
   if (attacker.height === defender.height + 1) {
     return {
       legal: true,
-      reason: "attacker is exactly one height larger",
+      reason: "attacker is exactly one size larger",
     };
   }
 
   if (attacker.height === defender.height && attacker.sides > defender.sides) {
     return {
       legal: true,
-      reason: "same height, attacker has more sides",
+      reason: "same size, attacker has more sides",
     };
   }
 
@@ -31,7 +31,7 @@ export function captureResult(
   ) {
     return {
       legal: true,
-      reason: "small triangle defeats large hexagon",
+      reason: "small 3-sided piece defeats large 6-sided piece",
     };
   }
 

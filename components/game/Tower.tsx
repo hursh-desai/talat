@@ -2,39 +2,75 @@ import type { PlacedTower, PlayerSlot, TowerSpec } from "@/lib/game/types";
 
 const SLOT_STYLES: Record<
   PlayerSlot,
-  { fill: string; stroke: string; label: string }
+  { fill: string; stroke: string; text: string; label: string }
 > = {
-  0: { fill: "#1a1a1a", stroke: "#c9a227", label: "Black" },
-  1: { fill: "#f5f5f5", stroke: "#888", label: "White" },
-  2: { fill: "#6b7280", stroke: "#c9a227", label: "Grey" },
+  0: { fill: "#1a1a1a", stroke: "#c9a227", text: "#f8e7a3", label: "Black" },
+  1: { fill: "#f5f5f5", stroke: "#888", text: "#171717", label: "White" },
+  2: { fill: "#6b7280", stroke: "#c9a227", text: "#ffffff", label: "Grey" },
 };
 
-function heightPx(height: TowerSpec["height"]): number {
-  return height === 1 ? 14 : height === 2 ? 20 : 26;
+function shapeSize(height: TowerSpec["height"], displaySize: "sm" | "md"): number {
+  if (displaySize === "sm") {
+    return height === 1 ? 20 : height === 2 ? 26 : 32;
+  }
+  return height === 1 ? 28 : height === 2 ? 36 : 44;
 }
 
-function ShapeIcon({ sides, size }: { sides: TowerSpec["sides"]; size: number }) {
+function heightLabel(height: TowerSpec["height"]): string {
+  return height === 1 ? "small" : height === 2 ? "medium" : "large";
+}
+
+function ShapeSilhouette({
+  sides,
+  size,
+  fill,
+  stroke,
+}: {
+  sides: TowerSpec["sides"];
+  size: number;
+  fill: string;
+  stroke: string;
+}) {
   if (sides === 3) {
     return (
       <polygon
-        points={`${size / 2},2 ${size - 2},${size - 2} 2,${size - 2}`}
-        fill="currentColor"
+        points={`${size / 2},2 ${size - 2},${size - 3} 2,${size - 3}`}
+        fill={fill}
+        stroke={stroke}
+        strokeLinejoin="round"
+        strokeWidth={2}
       />
     );
   }
   if (sides === 4) {
     return (
-      <rect x="2" y="2" width={size - 4} height={size - 4} fill="currentColor" />
+      <rect
+        x="3"
+        y="3"
+        width={size - 6}
+        height={size - 6}
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={2}
+      />
     );
   }
   const cx = size / 2;
   const cy = size / 2;
-  const r = size / 2 - 2;
+  const r = size / 2 - 3;
   const points = Array.from({ length: 6 }, (_, i) => {
     const angle = (Math.PI / 3) * i - Math.PI / 6;
     return `${cx + r * Math.cos(angle)},${cy + r * Math.sin(angle)}`;
   }).join(" ");
-  return <polygon points={points} fill="currentColor" />;
+  return (
+    <polygon
+      points={points}
+      fill={fill}
+      stroke={stroke}
+      strokeLinejoin="round"
+      strokeWidth={2}
+    />
+  );
 }
 
 type TowerPieceProps = {
@@ -47,34 +83,40 @@ export function TowerPiece({ tower, slot, size = "md" }: TowerPieceProps) {
   const ownerSlot =
     "ownerSlot" in tower ? (tower.ownerSlot as PlayerSlot) : slot ?? 0;
   const style = SLOT_STYLES[ownerSlot];
-  const h = heightPx(tower.height);
-  const iconSize = size === "sm" ? 12 : 16;
-  const width = size === "sm" ? 28 : 36;
+  const canvasSize = size === "sm" ? 36 : 52;
+  const silhouetteSize = shapeSize(tower.height, size);
+  const offset = (canvasSize - silhouetteSize) / 2;
+  const fontSize = size === "sm" ? 11 : 14;
 
   return (
     <svg
-      width={width}
-      height={h + iconSize + 4}
-      viewBox={`0 0 ${width} ${h + iconSize + 4}`}
+      width={canvasSize}
+      height={canvasSize}
+      viewBox={`0 0 ${canvasSize} ${canvasSize}`}
       className="mx-auto"
-      aria-label={`${style.label} ${tower.height === 1 ? "small" : tower.height === 2 ? "medium" : "large"} tower`}
+      aria-label={`${style.label} ${heightLabel(tower.height)} ${tower.sides}-sided piece`}
     >
-      <rect
-        x={(width - 18) / 2}
-        y={0}
-        width={18}
-        height={h}
-        rx={2}
-        fill={style.fill}
-        stroke={style.stroke}
-        strokeWidth={1.5}
-      />
-      <g
-        transform={`translate(${(width - iconSize) / 2}, ${h + 2})`}
-        style={{ color: style.stroke }}
-      >
-        <ShapeIcon sides={tower.sides} size={iconSize} />
+      <g transform={`translate(${offset}, ${offset})`}>
+        <ShapeSilhouette
+          sides={tower.sides}
+          size={silhouetteSize}
+          fill={style.fill}
+          stroke={style.stroke}
+        />
       </g>
+      <text
+        x={canvasSize / 2}
+        y={canvasSize / 2 + fontSize * 0.34}
+        textAnchor="middle"
+        fontSize={fontSize}
+        fontWeight={800}
+        fill={style.text}
+        stroke={ownerSlot === 1 ? "transparent" : "rgba(0,0,0,0.45)"}
+        strokeWidth={ownerSlot === 1 ? 0 : 0.75}
+        paintOrder="stroke"
+      >
+        {tower.sides}
+      </text>
     </svg>
   );
 }
@@ -89,6 +131,5 @@ export function slotLabel(slot: PlayerSlot): string {
 
 export function towerLabel(tower: TowerSpec): string {
   const h = tower.height === 1 ? "S" : tower.height === 2 ? "M" : "L";
-  const s = tower.sides === 3 ? "△" : tower.sides === 4 ? "□" : "⬡";
-  return `${h}${s}`;
+  return `${h}${tower.sides}`;
 }
