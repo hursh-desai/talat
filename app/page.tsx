@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { savePlayerSessionByCode } from "@/lib/playerStorage";
+import { RulesTutorial } from "@/components/game/RulesTutorial";
 
 export default function HomePage() {
   const router = useRouter();
@@ -139,6 +140,8 @@ export default function HomePage() {
           </Button>
         </CardContent>
       </Card>
+
+      <RulesTutorial />
     </div>
   );
 }

@@ -1,12 +1,26 @@
 import type { PlacedTower, TowerSpec } from "./types";
+import { rankLabel } from "./scoring";
 
-export function canCapture(attacker: TowerSpec, defender: TowerSpec): boolean {
+export type CaptureResult =
+  | { legal: true; reason: string }
+  | { legal: false; reason: string };
+
+export function captureResult(
+  attacker: TowerSpec,
+  defender: TowerSpec,
+): CaptureResult {
   if (attacker.height === defender.height + 1) {
-    return true;
+    return {
+      legal: true,
+      reason: "attacker is exactly one height larger",
+    };
   }
 
   if (attacker.height === defender.height && attacker.sides > defender.sides) {
-    return true;
+    return {
+      legal: true,
+      reason: "same height, attacker has more sides",
+    };
   }
 
   if (
@@ -15,10 +29,20 @@ export function canCapture(attacker: TowerSpec, defender: TowerSpec): boolean {
     defender.height === 3 &&
     defender.sides === 6
   ) {
-    return true;
+    return {
+      legal: true,
+      reason: "small triangle defeats large hexagon",
+    };
   }
 
-  return false;
+  return {
+    legal: false,
+    reason: `${rankLabel(attacker)} cannot capture ${rankLabel(defender)}`,
+  };
+}
+
+export function canCapture(attacker: TowerSpec, defender: TowerSpec): boolean {
+  return captureResult(attacker, defender).legal;
 }
 
 export function canCapturePiece(

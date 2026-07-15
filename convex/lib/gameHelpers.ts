@@ -26,7 +26,7 @@ export async function getPlayersForGame(
   return await ctx.db
     .query("players")
     .withIndex("by_game", (q) => q.eq("gameId", gameId))
-    .collect();
+    .take(3);
 }
 
 export async function getPlayerForToken(

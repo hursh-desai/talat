@@ -5,6 +5,8 @@ import { useMutation } from "convex/react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { captureResult } from "@/lib/game/capture";
+import { rankLabel } from "@/lib/game/scoring";
 import {
   getValidPlayActions,
   getValidSetupActions,
@@ -21,6 +23,7 @@ import type {
 import { TriangleLayout } from "./TriangleLayout";
 import { Scoreboard } from "./Scoreboard";
 import { GameOverModal } from "./GameOverModal";
+import { GameTimeline } from "./GameTimeline";
 import { Lobby } from "./Lobby";
 import { TowerPiece, towerLabel } from "./Tower";
 import { slotLabel } from "./Tower";
@@ -56,10 +59,12 @@ export function GameView({
   winnerSlot,
 }: GameViewProps) {
   const startGame = useMutation(api.games.startGame);
+  const rematchGame = useMutation(api.games.rematchGame);
   const placeTower = useMutation(api.games.placeTower);
   const moveTower = useMutation(api.games.moveTower);
   const [selection, setSelection] = useState<Selection>(null);
   const [starting, setStarting] = useState(false);
+  const [rematching, setRematching] = useState(false);
   const [pending, setPending] = useState(false);
 
   const playState = useMemo(
@@ -101,6 +106,19 @@ export function GameView({
       }
     }
 
+    if (status === "playing" && selection === null) {
+      const seen = new Set<string>();
+      for (const action of validPlayActions) {
+        const key = `${action.boardId}:${action.from.row}:${action.from.col}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        result[action.boardId] = [
+          ...(result[action.boardId] ?? []),
+          action.from,
+        ];
+      }
+    }
+
     if (status === "playing" && selection?.kind === "play") {
       for (const action of validPlayActions) {
         if (
@@ -119,6 +137,36 @@ export function GameView({
     return result;
   }, [status, selection, validSetupActions, validPlayActions]);
 
+  const captureHints = useMemo(() => {
+    if (!playState || status !== "playing" || selection?.kind !== "play") {
+      return [];
+    }
+
+    const board = playState.boardState.boards[selection.boardId];
+    const attacker =
+      board[selection.position.row]?.[selection.position.col] ?? null;
+    if (!attacker) return [];
+
+    return validPlayActions
+      .filter(
+        (action) =>
+          action.boardId === selection.boardId &&
+          action.from.row === selection.position.row &&
+          action.from.col === selection.position.col,
+      )
+      .map((action) => ({
+        action,
+        defender: board[action.to.row][action.to.col],
+      }))
+      .filter((item) => item.defender !== null)
+      .map((item) => ({
+        to: item.action.to,
+        attacker,
+        defender: item.defender!,
+        reason: captureResult(attacker, item.defender!).reason,
+      }));
+  }, [playState, selection, status, validPlayActions]);
+
   const handleStart = useCallback(async () => {
     if (!playerToken) return;
     setStarting(true);
@@ -130,6 +178,19 @@ export function GameView({
       setStarting(false);
     }
   }, [gameId, playerToken, startGame]);
+
+  const handleRematch = useCallback(async () => {
+    if (!playerToken) return;
+    setRematching(true);
+    try {
+      await rematchGame({ gameId, playerToken });
+      setSelection(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to start rematch");
+    } finally {
+      setRematching(false);
+    }
+  }, [gameId, playerToken, rematchGame]);
 
   const handleCellClick = useCallback(
     async (
@@ -284,6 +345,8 @@ export function GameView({
               <button
                 key={towerLabel(tower)}
                 type="button"
+                data-testid={`reserve-${tower.height}-${tower.sides}`}
+                aria-label={`Place ${towerLabel(tower)}`}
                 onClick={() => setSelection({ kind: "setup", tower })}
                 className={cn(
                   "rounded-lg border p-2 transition-colors",
@@ -308,6 +371,25 @@ export function GameView({
         </p>
       )}
 
+      {captureHints.length > 0 && (
+        <div className="mx-auto max-w-xl rounded-lg border border-[#c9a227]/30 bg-[#151817] px-4 py-3">
+          <p className="text-xs uppercase text-[#c9a227]">Legal capture</p>
+          <div className="mt-2 space-y-2">
+            {captureHints.map(({ to, attacker, defender, reason }) => (
+              <div
+                key={`${to.row}-${to.col}`}
+                className="text-sm text-white/75"
+              >
+                <span className="text-white">{rankLabel(attacker)}</span>{" "}
+                defeats <span className="text-white">{rankLabel(defender)}</span>
+                <span className="text-white/45"> at {to.row + 1},{to.col + 1}</span>
+                <div className="text-xs text-white/45">Reason: {reason}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <TriangleLayout
         boards={playState.boardState.boards}
         frozenBoards={playState.frozenBoards}
@@ -330,6 +412,18 @@ export function GameView({
           winnerSlot={winnerSlot}
           players={players}
           scores={playState.scores}
+          isHost={isHost}
+          onRematch={handleRematch}
+          rematching={rematching}
+        />
+      )}
+
+      {playerToken && (
+        <GameTimeline
+          gameId={gameId}
+          playerToken={playerToken}
+          players={players}
+          liveState={playState}
         />
       )}
     </div>

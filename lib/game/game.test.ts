@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { canCapture } from "./capture";
 import {
+  applyPlayMove,
   applySetupMove,
   createPlayStateFromWaiting,
+  type PlayState,
 } from "./applyMove";
 import { isBoardFrozen } from "./frozen";
 import { isValidMove, getValidMovesForPiece } from "./movement";
@@ -61,6 +63,32 @@ describe("movement", () => {
       true,
     );
   });
+
+  it("allows sideways captures but not sideways empty moves", () => {
+    const board = createEmptyBoard();
+    board[2][2] = { height: 2, sides: 6, ownerSlot: 0 };
+    board[2][1] = { height: 2, sides: 4, ownerSlot: 1 };
+
+    expect(isValidMove(board, "board01", { row: 2, col: 2 }, { row: 2, col: 1 })).toBe(
+      true,
+    );
+    expect(isValidMove(board, "board01", { row: 2, col: 2 }, { row: 2, col: 3 })).toBe(
+      false,
+    );
+  });
+
+  it("only allows sideways captures on the opponent starting row", () => {
+    const board = createEmptyBoard();
+    board[4][2] = { height: 2, sides: 6, ownerSlot: 0 };
+    board[4][1] = { height: 2, sides: 4, ownerSlot: 1 };
+
+    expect(isValidMove(board, "board01", { row: 4, col: 2 }, { row: 4, col: 1 })).toBe(
+      true,
+    );
+    expect(isValidMove(board, "board01", { row: 4, col: 2 }, { row: 4, col: 3 })).toBe(
+      false,
+    );
+  });
 });
 
 describe("setup and play flow", () => {
@@ -94,6 +122,61 @@ describe("frozen boards", () => {
     board[2][2] = { height: 3, sides: 4, ownerSlot: 0 };
     board[3][2] = { height: 2, sides: 3, ownerSlot: 1 };
     expect(isBoardFrozen(board, "board01")).toBe(false);
+  });
+
+  it("keeps a board active when a future capture can be reached", () => {
+    const board = createEmptyBoard();
+    board[0][2] = { height: 3, sides: 4, ownerSlot: 0 };
+    board[4][2] = { height: 2, sides: 3, ownerSlot: 1 };
+    expect(isBoardFrozen(board, "board01")).toBe(false);
+  });
+});
+
+describe("authoritative play validation", () => {
+  function playingState(): PlayState {
+    return {
+      ...createPlayStateFromWaiting(),
+      phase: "play",
+      status: "playing",
+      currentTurnSlot: 0,
+      frozenBoards: [false, false, false],
+    };
+  }
+
+  it("rejects moving an opponent tower", () => {
+    const state = playingState();
+    state.boardState.boards.board01[4][2] = {
+      height: 2,
+      sides: 4,
+      ownerSlot: 1,
+    };
+
+    expect(() =>
+      applyPlayMove(state, 0, {
+        kind: "move",
+        boardId: "board01",
+        from: { row: 4, col: 2 },
+        to: { row: 3, col: 2 },
+      }),
+    ).toThrow("Invalid move");
+  });
+
+  it("rejects moving on a board outside the player's fronts", () => {
+    const state = playingState();
+    state.boardState.boards.board12[0][2] = {
+      height: 2,
+      sides: 4,
+      ownerSlot: 0,
+    };
+
+    expect(() =>
+      applyPlayMove(state, 0, {
+        kind: "move",
+        boardId: "board12",
+        from: { row: 0, col: 2 },
+        to: { row: 1, col: 2 },
+      }),
+    ).toThrow("You cannot move on that board");
   });
 });
 

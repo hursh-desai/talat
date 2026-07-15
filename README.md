@@ -10,6 +10,11 @@ Built with **Next.js** (Vercel) and **Convex** for real-time multiplayer sync.
 - Anonymous play with display names (no sign-in required)
 - Full rules engine: setup, movement, capture hierarchy, frozen boards, scoring
 - Real-time board updates across all players
+- Rulebook-aware future freeze detection with board-local reachability search
+- Event feed and replay snapshots backed by Convex game events
+- Capture hints that explain why a selected matchup is legal
+- Same-seat rematch for finished games
+- In-app rules tutorial for deployment, movement, captures, and scoring
 - Dark/gold UI inspired by the rulebook
 
 ## Quick start
@@ -50,7 +55,8 @@ npm run dev
 3. Host clicks **Start game** when all 3 seats are filled
 4. **Setup:** take turns placing your 9 towers on starting rows
 5. **Play:** move one tower per turn on any non-frozen board
-6. Game ends when **2 of 3 boards are frozen** — highest score wins
+6. Use the event feed to review previous positions while waiting
+7. Game ends when **2 of 3 boards are frozen** — highest score wins
 
 ## Game rules (summary)
 
@@ -126,7 +132,7 @@ Copy the production `NEXT_PUBLIC_CONVEX_URL` from the Convex dashboard.
 npm test
 ```
 
-Unit tests cover capture rules, movement, setup flow, frozen-board detection, and tie-breaker scoring.
+Unit tests cover capture rules, movement, setup flow, future-reachability frozen-board detection, server-authoritative move validation, and tie-breaker scoring.
 
 ## License
 

@@ -112,9 +112,12 @@ export function applyPlayMove(
   if (state.frozenBoards[boardIndex]) {
     throw new Error("Board is frozen");
   }
+  if (!boardsForSlot(slot).includes(action.boardId)) {
+    throw new Error("You cannot move on that board");
+  }
 
   const board = state.boardState.boards[action.boardId];
-  const { board: nextBoard, captured } = applyMoveToBoard(board, action);
+  const { board: nextBoard, captured } = applyMoveToBoard(board, action, slot);
 
   const nextBoardState: GameBoardState = {
     ...state.boardState,

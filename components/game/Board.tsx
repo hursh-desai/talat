@@ -61,11 +61,16 @@ export function BoardGrid({
               rowIndex === startingRow(boardId, playerB);
             const isHighlighted = highlightSet.has(key);
             const isSelected = selectedKey === key;
+            const cellLabel = `${label} row ${rowIndex + 1} column ${
+              colIndex + 1
+            }${cell ? ` ${cell.ownerSlot}` : " empty"}`;
 
             return (
               <button
                 key={key}
                 type="button"
+                data-testid={`cell-${boardId}-${rowIndex}-${colIndex}`}
+                aria-label={cellLabel}
                 disabled={!interactive}
                 onClick={() => onCellClick?.(position, cell)}
                 className={cn(

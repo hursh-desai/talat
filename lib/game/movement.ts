@@ -20,15 +20,19 @@ export function getPiece(board: Board, pos: Position): PlacedTower | null {
   return board[pos.row][pos.col];
 }
 
-function movementDeltas(
+function normalMoveDeltas(
   boardId: BoardId,
   slot: PlayerSlot,
   row: number,
 ): Position[] {
   if (isOnOpponentStartingRow(boardId, slot, row)) {
-    return sidewaysDeltas();
+    return [];
   }
   return forwardDeltas(boardId, slot);
+}
+
+function captureDeltas(boardId: BoardId, slot: PlayerSlot): Position[] {
+  return [...forwardDeltas(boardId, slot), ...sidewaysDeltas()];
 }
 
 export function getValidMovesForPiece(
@@ -40,16 +44,23 @@ export function getValidMovesForPiece(
   if (!piece) return [];
 
   const destinations: Position[] = [];
-  const deltas = movementDeltas(boardId, piece.ownerSlot, from.row);
 
-  for (const delta of deltas) {
+  for (const delta of normalMoveDeltas(boardId, piece.ownerSlot, from.row)) {
     const to = addPosition(from, delta);
     if (!inBounds(to)) continue;
 
     const target = getPiece(board, to);
     if (target === null) {
       destinations.push(to);
-    } else if (canCapturePiece(piece, target)) {
+    }
+  }
+
+  for (const delta of captureDeltas(boardId, piece.ownerSlot)) {
+    const to = addPosition(from, delta);
+    if (!inBounds(to)) continue;
+
+    const target = getPiece(board, to);
+    if (target !== null && canCapturePiece(piece, target)) {
       destinations.push(to);
     }
   }
@@ -77,12 +88,13 @@ export function isValidMove(
 export function applyMoveToBoard(
   board: Board,
   action: MoveAction,
+  expectedSlot?: PlayerSlot,
 ): { board: Board; captured: PlacedTower | null } {
   const piece = getPiece(board, action.from);
   if (!piece) {
     throw new Error("No piece at source");
   }
-  if (!isValidMove(board, action.boardId, action.from, action.to)) {
+  if (!isValidMove(board, action.boardId, action.from, action.to, expectedSlot)) {
     throw new Error("Invalid move");
   }
 

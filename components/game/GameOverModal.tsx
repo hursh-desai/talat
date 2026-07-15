@@ -8,13 +8,18 @@ type GameOverModalProps = {
   winnerSlot: number | null;
   players: { slot: number; displayName: string }[];
   scores: number[];
-  onClose?: () => void;
+  isHost?: boolean;
+  onRematch?: () => void;
+  rematching?: boolean;
 };
 
 export function GameOverModal({
   winnerSlot,
   players,
   scores,
+  isHost = false,
+  onRematch,
+  rematching = false,
 }: GameOverModalProps) {
   const sorted = [0, 1, 2]
     .map((slot) => ({
@@ -59,12 +64,23 @@ export function GameOverModal({
             ))}
           </ol>
 
-          <Button
-            className="w-full bg-[#c9a227] text-black hover:bg-[#d4b23a]"
-            onClick={() => (window.location.href = "/")}
-          >
-            Back to home
-          </Button>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {isHost && (
+              <Button
+                className="bg-[#c9a227] text-black hover:bg-[#d4b23a]"
+                onClick={onRematch}
+                disabled={rematching}
+              >
+                {rematching ? "Starting..." : "Rematch"}
+              </Button>
+            )}
+            <Button
+              className="bg-[#263d39] text-white hover:bg-[#31504a]"
+              onClick={() => (window.location.href = "/")}
+            >
+              Back home
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>

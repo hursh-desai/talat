@@ -22,4 +22,14 @@ export default defineSchema({
   })
     .index("by_game", ["gameId"])
     .index("by_game_and_slot", ["gameId", "slot"]),
+
+  gameEvents: defineTable({
+    gameId: v.id("games"),
+    sequence: v.number(),
+    kind: v.union(v.literal("start"), v.literal("setup"), v.literal("move")),
+    actorSlot: v.union(v.number(), v.null()),
+    description: v.string(),
+    playState: playStateValidator,
+    createdAt: v.number(),
+  }).index("by_game_and_sequence", ["gameId", "sequence"]),
 });
