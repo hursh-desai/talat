@@ -44,13 +44,13 @@ export default function GamePage({
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="mx-auto w-full max-w-6xl flex-1 px-3 py-3 sm:px-4 sm:py-6">
+      <div className="mb-3 flex items-center justify-between sm:mb-5">
         <div>
           <Link href="/" className="text-sm text-white/40 hover:text-[#c9a227]">
             ← Talat
           </Link>
-          <h1 className="text-xl font-semibold text-[#c9a227]">
+          <h1 className="text-lg font-semibold text-[#c9a227] sm:text-xl">
             Game {game.code}
           </h1>
         </div>

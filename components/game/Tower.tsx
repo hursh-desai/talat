@@ -9,9 +9,14 @@ const SLOT_STYLES: Record<
   2: { fill: "#6b7280", stroke: "#c9a227", label: "Grey" },
 };
 
-function strokeWidth(height: TowerSpec["height"], displaySize: "sm" | "md"): number {
+function strokeWidth(
+  height: TowerSpec["height"],
+  displaySize: "sm" | "md" | "lg",
+): number {
   const widths = height === 1 ? 2.5 : height === 2 ? 5 : 8;
-  return displaySize === "sm" ? widths * 0.72 : widths;
+  if (displaySize === "sm") return widths * 0.72;
+  if (displaySize === "lg") return widths * 1.08;
+  return widths;
 }
 
 function heightLabel(height: TowerSpec["height"]): string {
@@ -77,24 +82,51 @@ function ShapeSilhouette({
 type TowerPieceProps = {
   tower: TowerSpec | PlacedTower;
   slot?: PlayerSlot;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
+  physical?: boolean;
 };
 
-export function TowerPiece({ tower, slot, size = "md" }: TowerPieceProps) {
+export function TowerPiece({
+  tower,
+  slot,
+  size = "md",
+  physical = false,
+}: TowerPieceProps) {
   const ownerSlot =
     "ownerSlot" in tower ? (tower.ownerSlot as PlayerSlot) : slot ?? 0;
   const style = SLOT_STYLES[ownerSlot];
-  const canvasSize = size === "sm" ? 36 : 52;
+  const canvasSize = size === "sm" ? 36 : size === "lg" ? 64 : 52;
   const shapeStrokeWidth = strokeWidth(tower.height, size);
+  const shadowY = canvasSize - 5;
 
   return (
     <svg
       width={canvasSize}
       height={canvasSize}
       viewBox={`0 0 ${canvasSize} ${canvasSize}`}
-      className="mx-auto"
+      className={physical ? "mx-auto drop-shadow-[0_8px_5px_rgba(0,0,0,0.38)]" : "mx-auto"}
       aria-label={`${style.label} ${heightLabel(tower.height)} ${tower.sides}-sided piece`}
     >
+      {physical && (
+        <ellipse
+          cx={canvasSize / 2}
+          cy={shadowY}
+          rx={canvasSize * 0.28}
+          ry={canvasSize * 0.08}
+          fill="rgba(0,0,0,0.34)"
+        />
+      )}
+      {physical && (
+        <g transform={`translate(0 ${Math.max(2, shapeStrokeWidth * 0.32)})`}>
+          <ShapeSilhouette
+            sides={tower.sides}
+            size={canvasSize}
+            fill="#0d0b08"
+            stroke="#0d0b08"
+            strokeWidth={shapeStrokeWidth}
+          />
+        </g>
+      )}
       <ShapeSilhouette
         sides={tower.sides}
         size={canvasSize}

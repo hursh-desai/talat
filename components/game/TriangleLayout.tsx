@@ -3,10 +3,10 @@
 import type { BoardId, Boards, PlayerSlot, Position } from "@/lib/game/types";
 import { BoardGrid } from "./Board";
 
-const BOARD_LABELS: Record<BoardId, string> = {
-  board01: "Black ↔ White",
-  board02: "Black ↔ Grey",
-  board12: "White ↔ Grey",
+export const BOARD_LABELS: Record<BoardId, string> = {
+  board01: "Black vs White",
+  board02: "Black vs Grey",
+  board12: "White vs Grey",
 };
 
 type TriangleLayoutProps = {
@@ -49,6 +49,7 @@ export function TriangleLayout({
           }
           onCellClick={(pos, piece) => onCellClick?.("board01", pos, piece)}
           viewerSlot={viewerSlot}
+          variant="mini"
         />
       </div>
       <div className="flex justify-center">
@@ -64,6 +65,7 @@ export function TriangleLayout({
           }
           onCellClick={(pos, piece) => onCellClick?.("board02", pos, piece)}
           viewerSlot={viewerSlot}
+          variant="mini"
         />
       </div>
       <div className="flex justify-center">
@@ -79,6 +81,7 @@ export function TriangleLayout({
           }
           onCellClick={(pos, piece) => onCellClick?.("board12", pos, piece)}
           viewerSlot={viewerSlot}
+          variant="mini"
         />
       </div>
     </div>

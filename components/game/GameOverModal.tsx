@@ -30,7 +30,7 @@ export function GameOverModal({
     .sort((a, b) => b.score - a.score);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 p-4">
       <Card className="w-full max-w-md border-[#c9a227]/40 bg-[#111]">
         <CardHeader>
           <CardTitle className="text-center text-[#c9a227]">Game Over</CardTitle>
