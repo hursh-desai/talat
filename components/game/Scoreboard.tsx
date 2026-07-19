@@ -2,7 +2,6 @@
 
 import { CAPTURE_POINTS, END_LINE_POINTS } from "@/lib/game/scoring";
 import { slotLabel } from "./Tower";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 type ScoreboardProps = {
@@ -57,21 +56,6 @@ export function Scoreboard({
               <span className="pb-0.5 text-[11px] text-white/45">
                 {captures}x{CAPTURE_POINTS}
               </span>
-            </div>
-            <div className="mt-2 flex min-h-5 flex-wrap gap-1 pl-1">
-              {viewerSlot === slot && (
-                <Badge className="h-5 bg-[#72c7bb] px-1.5 text-[10px] text-black">
-                  You
-                </Badge>
-              )}
-              {activeSlot === slot && (
-                <Badge
-                  variant="outline"
-                  className="h-5 border-[#d9bb62]/50 px-1.5 text-[10px] text-[#f1d892]"
-                >
-                  Turn
-                </Badge>
-              )}
             </div>
           </div>
         );

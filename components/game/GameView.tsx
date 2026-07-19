@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useMutation } from "convex/react";
-import { CheckCircle2, History, Map, Orbit, Telescope, X } from "lucide-react";
+import { History, Map, Orbit, Telescope, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -21,7 +21,6 @@ import type {
   Position,
   TowerSpec,
 } from "@/lib/game/types";
-import { BOARD_IDS } from "@/lib/game/types";
 import { BOARD_LABELS } from "./TriangleLayout";
 import { Scoreboard } from "./Scoreboard";
 import { GameOverModal } from "./GameOverModal";
@@ -61,12 +60,6 @@ const CAMERA_OPTIONS: {
   { angle: "table", label: "Whole table camera", Icon: Orbit },
   { angle: "overhead", label: "Overhead camera", Icon: Map },
 ];
-
-const BOARD_INDEX: Record<BoardId, number> = {
-  board01: 0,
-  board02: 1,
-  board12: 2,
-};
 
 function positionLabel(position: Position): string {
   return `${position.row + 1},${position.col + 1}`;
@@ -270,51 +263,6 @@ export function GameView({
           ? "Movable pieces glow on the board"
           : turnText;
 
-  const reserveCount =
-    status === "setup" && controlSlot !== null
-      ? playState?.boardState.reserves[controlSlot]?.length ?? 0
-      : 0;
-  const setupProgress =
-    status === "setup" && controlSlot !== null
-      ? `${Math.max(0, 9 - reserveCount)}/9 placed`
-      : null;
-  const frontStatuses = useMemo(
-    () =>
-      BOARD_IDS.map((boardId) => ({
-        boardId,
-        label: BOARD_LABELS[boardId],
-        litCount: highlightByBoard[boardId]?.length ?? 0,
-        selected: selection?.kind === "play" && selection.boardId === boardId,
-        frozen: playState?.frozenBoards[BOARD_INDEX[boardId]] ?? false,
-      })),
-    [highlightByBoard, playState?.frozenBoards, selection],
-  );
-  const coachTitle =
-    status === "setup"
-      ? "Setup guide"
-      : status === "playing"
-        ? isMyTurn
-          ? "Your move"
-          : "Watching"
-        : "Round complete";
-  const coachDetail =
-    status === "setup"
-      ? selection?.kind === "setup"
-        ? `Tap a gold starting-row space for ${towerLabel(selection.tower)}.`
-        : isMyTurn
-          ? "Pick one reserve piece below; legal starting spaces will light up."
-          : `${currentPlayer?.displayName ?? turnText} is placing a piece.`
-      : status === "playing"
-        ? selection?.kind === "play"
-          ? "Gold cells are legal destinations. Capture notes appear below when a capture is available."
-          : isMyTurn
-            ? "Tap one glowing piece to see where it can move."
-            : `Waiting for ${
-                currentPlayer?.displayName ??
-                (playState ? slotLabel(playState.currentTurnSlot) : "the table")
-              } to move.`
-        : "Scores are final. The host can start a rematch.";
-
   const handleStart = useCallback(async () => {
     if (!playerToken) return;
     setStarting(true);
@@ -370,10 +318,7 @@ export function GameView({
       }
 
       if (status === "setup") {
-        if (selection?.kind !== "setup") {
-          toast("Choose a reserve piece first.");
-          return;
-        }
+        if (selection?.kind !== "setup") return;
         const valid = validSetupActions.find(
           (a) =>
             a.boardId === boardId &&
@@ -382,10 +327,7 @@ export function GameView({
             a.tower.height === selection.tower.height &&
             a.tower.sides === selection.tower.sides,
         );
-        if (!valid) {
-          toast("Use one of the lit starting spaces for that piece.");
-          return;
-        }
+        if (!valid) return;
 
         setPending(true);
         try {
@@ -435,27 +377,10 @@ export function GameView({
             }
             return;
           }
-
-          toast("Choose one of the lit destinations.");
         }
 
         if (piece && piece.ownerSlot === controlSlot) {
-          const movable = validPlayActions.some(
-            (a) =>
-              a.boardId === boardId &&
-              a.from.row === position.row &&
-              a.from.col === position.col,
-          );
-          if (!movable) {
-            toast("That piece has no legal move right now.");
-            return;
-          }
           setSelection({ kind: "play", boardId, position });
-          return;
-        }
-
-        if (!selection) {
-          toast("Tap one of your glowing pieces to begin.");
         }
       }
     },
@@ -544,28 +469,8 @@ export function GameView({
           scores={playState.scores}
           capturedBySlot={playState.capturedBySlot}
           viewerSlot={viewerSlot}
-          activeSlot={playState.currentTurnSlot}
+          activeSlot={controlSlot}
         />
-
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[#72c7bb]/25 bg-[#0d1d1b]/80 px-3 py-2">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-[#72c7bb]/50 bg-[#72c7bb]/12 text-[#b8fff6]">
-              <CheckCircle2 className="h-4 w-4" />
-            </span>
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-white">{coachTitle}</p>
-              <p className="text-xs leading-5 text-white/58">{coachDetail}</p>
-            </div>
-          </div>
-          {setupProgress && (
-            <Badge
-              variant="outline"
-              className="border-[#72c7bb]/40 text-[#b8fff6]"
-            >
-              {setupProgress}
-            </Badge>
-          )}
-        </div>
       </header>
 
       <main className="mx-auto mt-3 grid max-w-6xl gap-3 lg:grid-cols-[minmax(0,1fr)_248px] lg:items-start">
@@ -602,8 +507,6 @@ export function GameView({
                 );
               })}
             </div>
-
-            <FrontStatusStrip fronts={frontStatuses} />
 
             <TableScene
               boards={playState.boardState.boards}
@@ -729,53 +632,6 @@ export function GameView({
           rematching={rematching}
         />
       )}
-    </div>
-  );
-}
-
-function FrontStatusStrip({
-  fronts,
-}: {
-  fronts: Array<{
-    boardId: BoardId;
-    label: string;
-    litCount: number;
-    selected: boolean;
-    frozen: boolean;
-  }>;
-}) {
-  return (
-    <div className="pointer-events-none absolute inset-x-3 top-14 z-30 flex flex-wrap gap-2">
-      {fronts.map((front) => {
-        const active = front.litCount > 0 || front.selected;
-
-        return (
-          <div
-            key={front.boardId}
-            className={cn(
-              "min-w-0 rounded-sm border px-2.5 py-1.5 text-xs shadow-[0_10px_24px_rgba(0,0,0,0.3)] backdrop-blur",
-              front.frozen
-                ? "border-white/15 bg-[#2b2f31]/82 text-white/48"
-                : active
-                  ? "border-[#72c7bb]/55 bg-[#0d1d1b]/88 text-[#c8fff8]"
-                  : "border-black/35 bg-[#120d08]/76 text-white/48",
-            )}
-          >
-            <span className="block max-w-[9rem] truncate font-medium">
-              {front.label}
-            </span>
-            <span className="block text-[11px]">
-              {front.frozen
-                ? "Frozen"
-                : front.selected
-                  ? "Selected front"
-                  : front.litCount > 0
-                    ? `${front.litCount} lit`
-                    : "Quiet"}
-            </span>
-          </div>
-        );
-      })}
     </div>
   );
 }
