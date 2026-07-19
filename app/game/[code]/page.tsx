@@ -59,6 +59,7 @@ export default function GamePage({
       <GameView
         gameId={game.gameId}
         code={game.code}
+        mode={game.mode}
         status={game.status}
         players={game.players}
         viewerSlot={game.viewerSlot}

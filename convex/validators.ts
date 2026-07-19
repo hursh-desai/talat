@@ -81,3 +81,14 @@ export const gameStatusValidator = v.union(
   v.literal("playing"),
   v.literal("finished"),
 );
+
+export const gameModeValidator = v.union(
+  v.literal("multiplayer"),
+  v.literal("solo"),
+);
+
+export const playerSlotValidator = v.union(
+  v.literal(0),
+  v.literal(1),
+  v.literal(2),
+);

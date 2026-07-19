@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useMutation } from "convex/react";
-import { History, X } from "lucide-react";
+import { CheckCircle2, History, Map, Orbit, Telescope, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -21,12 +21,13 @@ import type {
   Position,
   TowerSpec,
 } from "@/lib/game/types";
-import { BoardGrid } from "./Board";
-import { BOARD_LABELS, BOARD_ORDER } from "./TriangleLayout";
+import { BOARD_IDS } from "@/lib/game/types";
+import { BOARD_LABELS } from "./TriangleLayout";
 import { Scoreboard } from "./Scoreboard";
 import { GameOverModal } from "./GameOverModal";
 import { GameTimeline } from "./GameTimeline";
 import { Lobby } from "./Lobby";
+import { TableScene, type CameraAngle } from "./TableScene";
 import { TowerPiece, towerLabel } from "./Tower";
 import { slotLabel } from "./Tower";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +37,7 @@ import { cn } from "@/lib/utils";
 type GameViewProps = {
   gameId: Id<"games">;
   code: string;
+  mode: "multiplayer" | "solo";
   status: "waiting" | "setup" | "playing" | "finished";
   players: { slot: number; displayName: string; isHost: boolean }[];
   viewerSlot: number | null;
@@ -50,6 +52,16 @@ type Selection =
   | { kind: "play"; boardId: BoardId; position: Position }
   | null;
 
+const CAMERA_OPTIONS: {
+  angle: CameraAngle;
+  label: string;
+  Icon: typeof Telescope;
+}[] = [
+  { angle: "original", label: "Original camera", Icon: Telescope },
+  { angle: "table", label: "Whole table camera", Icon: Orbit },
+  { angle: "overhead", label: "Overhead camera", Icon: Map },
+];
+
 const BOARD_INDEX: Record<BoardId, number> = {
   board01: 0,
   board02: 1,
@@ -63,6 +75,7 @@ function positionLabel(position: Position): string {
 export function GameView({
   gameId,
   code,
+  mode,
   status,
   players,
   viewerSlot,
@@ -72,17 +85,17 @@ export function GameView({
   winnerSlot,
 }: GameViewProps) {
   const startGame = useMutation(api.games.startGame);
+  const startSoloGame = useMutation(api.games.startSoloGame);
   const rematchGame = useMutation(api.games.rematchGame);
   const placeTower = useMutation(api.games.placeTower);
   const moveTower = useMutation(api.games.moveTower);
   const [selection, setSelection] = useState<Selection>(null);
-  const [activeBoard, setActiveBoard] = useState<BoardId>(
-    viewerSlot === 2 ? "board02" : "board01",
-  );
   const [showHistory, setShowHistory] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [startingSolo, setStartingSolo] = useState(false);
   const [rematching, setRematching] = useState(false);
   const [pending, setPending] = useState(false);
+  const [cameraAngle, setCameraAngle] = useState<CameraAngle>("original");
 
   const playState = useMemo(
     () => (rawPlayState ? playStateFromStored(rawPlayState) : null),
@@ -90,21 +103,26 @@ export function GameView({
   );
 
   const viewer = viewerSlot as PlayerSlot | null;
+  const isSoloHost = mode === "solo" && isHost;
+  const controlSlot =
+    isSoloHost && playState
+      ? playState.currentTurnSlot
+      : viewer;
   const isMyTurn =
     playState &&
-    viewer !== null &&
-    playState.currentTurnSlot === viewer &&
+    controlSlot !== null &&
+    playState.currentTurnSlot === controlSlot &&
     playState.status !== "finished";
 
   const validSetupActions = useMemo(() => {
-    if (!playState || viewer === null) return [];
-    return getValidSetupActions(playState, viewer);
-  }, [playState, viewer]);
+    if (!playState || controlSlot === null) return [];
+    return getValidSetupActions(playState, controlSlot);
+  }, [controlSlot, playState]);
 
   const validPlayActions = useMemo(() => {
-    if (!playState || viewer === null) return [];
-    return getValidPlayActions(playState, viewer);
-  }, [playState, viewer]);
+    if (!playState || controlSlot === null) return [];
+    return getValidPlayActions(playState, controlSlot);
+  }, [controlSlot, playState]);
 
   const highlightByBoard = useMemo(() => {
     const result: Partial<Record<BoardId, Position[]>> = {};
@@ -192,29 +210,14 @@ export function GameView({
     [players, playState],
   );
 
-  const boardStats = useMemo(() => {
-    if (!playState) return [];
-
-    return BOARD_ORDER.map((boardId) => {
-      const board = playState.boardState.boards[boardId];
-      const cells = board.flat();
-      const ownPieces =
-        viewer === null
-          ? 0
-          : cells.filter((piece) => piece?.ownerSlot === viewer).length;
-      const openActions = highlightByBoard[boardId]?.length ?? 0;
-
-      return {
-        boardId,
-        ownPieces,
-        totalPieces: cells.filter(Boolean).length,
-        openActions,
-        frozen: playState.frozenBoards[BOARD_INDEX[boardId]],
-      };
-    });
-  }, [highlightByBoard, playState, viewer]);
-
-  const activeBoardHighlights = highlightByBoard[activeBoard] ?? [];
+  const highlightedSpaceCount = useMemo(
+    () =>
+      Object.values(highlightByBoard).reduce(
+        (total, positions) => total + (positions?.length ?? 0),
+        0,
+      ),
+    [highlightByBoard],
+  );
 
   const lastMoveText = (() => {
     if (!playState?.lastMove) return "Opening position";
@@ -238,7 +241,9 @@ export function GameView({
 
   const turnText =
     playState && playState.status !== "finished"
-      ? isMyTurn
+      ? isSoloHost
+        ? `Solo beta: controlling ${slotLabel(playState.currentTurnSlot)}`
+        : isMyTurn
         ? "Your turn"
         : `Waiting for ${
             currentPlayer?.displayName ?? slotLabel(playState.currentTurnSlot)
@@ -257,13 +262,58 @@ export function GameView({
   const trayDetail =
     status === "setup"
       ? selection?.kind === "setup"
-        ? `${towerLabel(selection.tower)} can land on ${activeBoardHighlights.length} spaces here`
+        ? `${towerLabel(selection.tower)} has ${highlightedSpaceCount} lit spaces`
         : "Your hand is the move menu"
       : selection?.kind === "play"
-        ? `${activeBoardHighlights.length} legal moves from ${positionLabel(selection.position)}`
+        ? `${highlightedSpaceCount} legal moves from ${positionLabel(selection.position)}`
         : isMyTurn
           ? "Movable pieces glow on the board"
           : turnText;
+
+  const reserveCount =
+    status === "setup" && controlSlot !== null
+      ? playState?.boardState.reserves[controlSlot]?.length ?? 0
+      : 0;
+  const setupProgress =
+    status === "setup" && controlSlot !== null
+      ? `${Math.max(0, 9 - reserveCount)}/9 placed`
+      : null;
+  const frontStatuses = useMemo(
+    () =>
+      BOARD_IDS.map((boardId) => ({
+        boardId,
+        label: BOARD_LABELS[boardId],
+        litCount: highlightByBoard[boardId]?.length ?? 0,
+        selected: selection?.kind === "play" && selection.boardId === boardId,
+        frozen: playState?.frozenBoards[BOARD_INDEX[boardId]] ?? false,
+      })),
+    [highlightByBoard, playState?.frozenBoards, selection],
+  );
+  const coachTitle =
+    status === "setup"
+      ? "Setup guide"
+      : status === "playing"
+        ? isMyTurn
+          ? "Your move"
+          : "Watching"
+        : "Round complete";
+  const coachDetail =
+    status === "setup"
+      ? selection?.kind === "setup"
+        ? `Tap a gold starting-row space for ${towerLabel(selection.tower)}.`
+        : isMyTurn
+          ? "Pick one reserve piece below; legal starting spaces will light up."
+          : `${currentPlayer?.displayName ?? turnText} is placing a piece.`
+      : status === "playing"
+        ? selection?.kind === "play"
+          ? "Gold cells are legal destinations. Capture notes appear below when a capture is available."
+          : isMyTurn
+            ? "Tap one glowing piece to see where it can move."
+            : `Waiting for ${
+                currentPlayer?.displayName ??
+                (playState ? slotLabel(playState.currentTurnSlot) : "the table")
+              } to move.`
+        : "Scores are final. The host can start a rematch.";
 
   const handleStart = useCallback(async () => {
     if (!playerToken) return;
@@ -276,6 +326,19 @@ export function GameView({
       setStarting(false);
     }
   }, [gameId, playerToken, startGame]);
+
+  const handleStartSolo = useCallback(async () => {
+    if (!playerToken) return;
+    setStartingSolo(true);
+    try {
+      await startSoloGame({ gameId, playerToken });
+      setSelection(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to start solo beta");
+    } finally {
+      setStartingSolo(false);
+    }
+  }, [gameId, playerToken, startSoloGame]);
 
   const handleRematch = useCallback(async () => {
     if (!playerToken) return;
@@ -296,12 +359,21 @@ export function GameView({
       position: Position,
       piece: PlacedTower | null,
     ) => {
-      if (!playerToken || !playState || viewer === null || !isMyTurn || pending) {
+      if (
+        !playerToken ||
+        !playState ||
+        controlSlot === null ||
+        !isMyTurn ||
+        pending
+      ) {
         return;
       }
 
       if (status === "setup") {
-        if (selection?.kind !== "setup") return;
+        if (selection?.kind !== "setup") {
+          toast("Choose a reserve piece first.");
+          return;
+        }
         const valid = validSetupActions.find(
           (a) =>
             a.boardId === boardId &&
@@ -310,13 +382,17 @@ export function GameView({
             a.tower.height === selection.tower.height &&
             a.tower.sides === selection.tower.sides,
         );
-        if (!valid) return;
+        if (!valid) {
+          toast("Use one of the lit starting spaces for that piece.");
+          return;
+        }
 
         setPending(true);
         try {
           await placeTower({
             gameId,
             playerToken,
+            actingSlot: isSoloHost ? controlSlot : undefined,
             boardId,
             position,
             tower: selection.tower,
@@ -346,6 +422,7 @@ export function GameView({
               await moveTower({
                 gameId,
                 playerToken,
+                actingSlot: isSoloHost ? controlSlot : undefined,
                 boardId,
                 from: selection.position,
                 to: position,
@@ -358,18 +435,36 @@ export function GameView({
             }
             return;
           }
+
+          toast("Choose one of the lit destinations.");
         }
 
-        if (piece && piece.ownerSlot === viewer) {
+        if (piece && piece.ownerSlot === controlSlot) {
+          const movable = validPlayActions.some(
+            (a) =>
+              a.boardId === boardId &&
+              a.from.row === position.row &&
+              a.from.col === position.col,
+          );
+          if (!movable) {
+            toast("That piece has no legal move right now.");
+            return;
+          }
           setSelection({ kind: "play", boardId, position });
+          return;
+        }
+
+        if (!selection) {
+          toast("Tap one of your glowing pieces to begin.");
         }
       }
     },
     [
       playerToken,
       playState,
-      viewer,
+      controlSlot,
       isMyTurn,
+      isSoloHost,
       pending,
       status,
       selection,
@@ -389,7 +484,9 @@ export function GameView({
         viewerSlot={viewerSlot}
         isHost={isHost}
         onStart={handleStart}
+        onStartSolo={handleStartSolo}
         starting={starting}
+        startingSolo={startingSolo}
       />
     );
   }
@@ -401,8 +498,8 @@ export function GameView({
   }
 
   return (
-    <div className="min-h-[calc(100dvh-7rem)] pb-28 lg:pb-0">
-      <header className="mx-auto max-w-5xl space-y-3">
+    <div className="min-h-[calc(100dvh-7rem)] pb-28 lg:pb-4">
+      <header className="mx-auto max-w-6xl space-y-2">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -447,94 +544,80 @@ export function GameView({
           scores={playState.scores}
           capturedBySlot={playState.capturedBySlot}
           viewerSlot={viewerSlot}
+          activeSlot={playState.currentTurnSlot}
         />
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[#72c7bb]/25 bg-[#0d1d1b]/80 px-3 py-2">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-[#72c7bb]/50 bg-[#72c7bb]/12 text-[#b8fff6]">
+              <CheckCircle2 className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-white">{coachTitle}</p>
+              <p className="text-xs leading-5 text-white/58">{coachDetail}</p>
+            </div>
+          </div>
+          {setupProgress && (
+            <Badge
+              variant="outline"
+              className="border-[#72c7bb]/40 text-[#b8fff6]"
+            >
+              {setupProgress}
+            </Badge>
+          )}
+        </div>
       </header>
 
-      <main className="mx-auto mt-4 grid max-w-5xl gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
+      <main className="mx-auto mt-3 grid max-w-6xl gap-3 lg:grid-cols-[minmax(0,1fr)_248px] lg:items-start">
         <div className="min-w-0">
-          <div className="grid grid-cols-3 gap-2">
-          {boardStats.map((stat) => {
-            const selectedBoard = stat.boardId === activeBoard;
-            return (
-              <button
-                key={stat.boardId}
-                type="button"
-                aria-pressed={selectedBoard}
-                onClick={() => setActiveBoard(stat.boardId)}
-                className={cn(
-                  "min-w-0 rounded-md border px-2 py-2 text-left transition",
-                  selectedBoard
-                    ? "border-[#d9bb62] bg-[#d9bb62]/16 shadow-[0_0_18px_rgba(217,187,98,0.16)]"
-                    : "border-white/10 bg-[#121816]/78 hover:border-[#d9bb62]/50",
-                )}
-              >
-                <span className="block truncate text-xs font-medium text-white/86">
-                  {BOARD_LABELS[stat.boardId]}
-                </span>
-                <span className="mt-1 flex items-center gap-1.5 text-[11px] text-white/45">
-                  <span>{stat.totalPieces} pieces</span>
-                  {stat.frozen ? (
-                    <span className="text-[#8fb7ff]">frozen</span>
-                  ) : stat.openActions > 0 ? (
-                    <span className="text-[#d9bb62]">{stat.openActions} lit</span>
-                  ) : (
-                    <span>{stat.ownPieces} yours</span>
-                  )}
-                </span>
-              </button>
-            );
-          })}
-          </div>
-
-          <section className="relative mt-3 overflow-hidden rounded-lg border border-white/10 bg-[#101412] px-3 pb-6 pt-4 shadow-[0_30px_70px_rgba(0,0,0,0.34)] sm:px-5 sm:pb-8">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(217,187,98,0.16),transparent_34%),linear-gradient(180deg,rgba(27,62,54,0.54),rgba(12,12,10,0.9))]" />
-          <div className="relative flex items-center justify-between gap-3 pb-3">
-            <div className="min-w-0">
-              <h2 className="truncate text-base font-semibold text-[#f1e1aa]">
-                {BOARD_LABELS[activeBoard]}
-              </h2>
-              <p className="text-xs text-white/45">
-                {playState.frozenBoards[BOARD_INDEX[activeBoard]]
-                  ? "Board frozen"
-                  : activeBoardHighlights.length > 0
-                    ? `${activeBoardHighlights.length} legal spaces glowing`
-                    : "No lit spaces on this board"}
-              </p>
-            </div>
+          <section className="relative h-[420px] overflow-hidden rounded-md border border-black/40 bg-[#130d09] shadow-[0_30px_70px_rgba(0,0,0,0.34)] sm:h-[min(58vh,560px)] lg:h-[min(60vh,680px)]">
             {pending && (
-              <span className="text-xs font-medium text-[#d9bb62]">
+              <span className="absolute right-3 top-3 z-30 rounded-sm border border-black/30 bg-[#1a120b]/80 px-2 py-1 text-xs font-medium text-[#f1d892]">
                 Sending...
               </span>
             )}
-          </div>
 
-          <div className="relative mx-auto flex max-w-[600px] justify-center py-2">
-            <div className="pointer-events-none absolute inset-x-8 bottom-0 h-7 rounded-full bg-black/45 blur-xl" />
-            <BoardGrid
-              boardId={activeBoard}
-              board={playState.boardState.boards[activeBoard]}
-              label={BOARD_LABELS[activeBoard]}
-              frozen={playState.frozenBoards[BOARD_INDEX[activeBoard]]}
-              interactive={
-                ((status === "setup" &&
-                  selection?.kind === "setup" &&
-                  !!isMyTurn) ||
-                  (status === "playing" && !!isMyTurn)) &&
-                !playState.frozenBoards[BOARD_INDEX[activeBoard]]
-              }
-              highlightPositions={activeBoardHighlights}
-              selectedPosition={
-                selection?.kind === "play" && selection.boardId === activeBoard
-                  ? selection.position
+            <div className="absolute left-3 top-3 z-30 flex rounded-md border border-black/35 bg-[#120d08]/76 p-1 shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur">
+              {CAMERA_OPTIONS.map(({ angle, label, Icon }) => {
+                const active = cameraAngle === angle;
+
+                return (
+                  <button
+                    key={angle}
+                    type="button"
+                    aria-label={label}
+                    title={label}
+                    aria-pressed={active}
+                    data-testid={`camera-${angle}`}
+                    onClick={() => setCameraAngle(angle)}
+                    className={cn(
+                      "grid h-8 w-8 place-items-center rounded-sm border transition",
+                      active
+                        ? "border-[#d9bb62]/70 bg-[#d9bb62]/18 text-[#f3d777]"
+                        : "border-transparent text-white/60 hover:border-white/18 hover:bg-white/8 hover:text-white",
+                    )}
+                  >
+                    <Icon className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                );
+              })}
+            </div>
+
+            <FrontStatusStrip fronts={frontStatuses} />
+
+            <TableScene
+              boards={playState.boardState.boards}
+              frozenBoards={playState.frozenBoards}
+              interactive={!!isMyTurn}
+              cameraAngle={cameraAngle}
+              highlightByBoard={highlightByBoard}
+              selected={
+                selection?.kind === "play"
+                  ? { boardId: selection.boardId, position: selection.position }
                   : null
               }
-              onCellClick={(pos, piece) =>
-                handleCellClick(activeBoard, pos, piece)
-              }
-              viewerSlot={viewer}
-              showLabel={false}
+              onCellClick={handleCellClick}
             />
-          </div>
           </section>
 
           {showHistory && playerToken && (
@@ -549,7 +632,7 @@ export function GameView({
           )}
           </div>
 
-        <section className="fixed inset-x-0 bottom-0 z-[70] border-t border-white/10 bg-[#080a09]/92 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 shadow-[0_-18px_45px_rgba(0,0,0,0.46)] backdrop-blur lg:static lg:inset-auto lg:rounded-lg lg:border lg:p-3 lg:shadow-[0_18px_50px_rgba(0,0,0,0.3)]">
+        <section className="fixed inset-x-0 bottom-0 z-[70] border-t border-black/40 bg-[#120d08]/94 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 shadow-[0_-18px_45px_rgba(0,0,0,0.46)] backdrop-blur lg:static lg:inset-auto lg:rounded-md lg:border lg:p-3 lg:shadow-[0_18px_50px_rgba(0,0,0,0.3)]">
         <div className="mx-auto max-w-5xl">
           <div className="mb-2 flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -572,9 +655,9 @@ export function GameView({
             )}
           </div>
 
-          {status === "setup" && viewer !== null && isMyTurn ? (
+          {status === "setup" && controlSlot !== null && isMyTurn ? (
             <div className="flex gap-2 overflow-x-auto pb-1">
-              {playState.boardState.reserves[viewer].map((tower) => {
+              {playState.boardState.reserves[controlSlot].map((tower) => {
                 const selected =
                   selection?.kind === "setup" &&
                   selection.tower.height === tower.height &&
@@ -588,12 +671,6 @@ export function GameView({
                     aria-label={`Place ${towerLabel(tower)}`}
                     onClick={() => {
                       setSelection({ kind: "setup", tower });
-                      const firstBoard = validSetupActions.find(
-                        (action) =>
-                          action.tower.height === tower.height &&
-                          action.tower.sides === tower.sides,
-                      )?.boardId;
-                      if (firstBoard) setActiveBoard(firstBoard);
                     }}
                     className={cn(
                       "grid h-20 min-w-16 place-items-center rounded-md border bg-[#111513] transition",
@@ -602,7 +679,12 @@ export function GameView({
                         : "border-white/10 hover:border-[#d9bb62]/55",
                     )}
                   >
-                    <TowerPiece tower={tower} slot={viewer} size="md" physical />
+                    <TowerPiece
+                      tower={tower}
+                      slot={controlSlot}
+                      size="md"
+                      physical
+                    />
                   </button>
                 );
               })}
@@ -647,6 +729,53 @@ export function GameView({
           rematching={rematching}
         />
       )}
+    </div>
+  );
+}
+
+function FrontStatusStrip({
+  fronts,
+}: {
+  fronts: Array<{
+    boardId: BoardId;
+    label: string;
+    litCount: number;
+    selected: boolean;
+    frozen: boolean;
+  }>;
+}) {
+  return (
+    <div className="pointer-events-none absolute inset-x-3 top-14 z-30 flex flex-wrap gap-2">
+      {fronts.map((front) => {
+        const active = front.litCount > 0 || front.selected;
+
+        return (
+          <div
+            key={front.boardId}
+            className={cn(
+              "min-w-0 rounded-sm border px-2.5 py-1.5 text-xs shadow-[0_10px_24px_rgba(0,0,0,0.3)] backdrop-blur",
+              front.frozen
+                ? "border-white/15 bg-[#2b2f31]/82 text-white/48"
+                : active
+                  ? "border-[#72c7bb]/55 bg-[#0d1d1b]/88 text-[#c8fff8]"
+                  : "border-black/35 bg-[#120d08]/76 text-white/48",
+            )}
+          >
+            <span className="block max-w-[9rem] truncate font-medium">
+              {front.label}
+            </span>
+            <span className="block text-[11px]">
+              {front.frozen
+                ? "Frozen"
+                : front.selected
+                  ? "Selected front"
+                  : front.litCount > 0
+                    ? `${front.litCount} lit`
+                    : "Quiet"}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

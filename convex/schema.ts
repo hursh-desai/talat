@@ -1,10 +1,15 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { gameStatusValidator, playStateValidator } from "./validators";
+import {
+  gameModeValidator,
+  gameStatusValidator,
+  playStateValidator,
+} from "./validators";
 
 export default defineSchema({
   games: defineTable({
     code: v.string(),
+    mode: v.optional(gameModeValidator),
     status: gameStatusValidator,
     playState: v.optional(playStateValidator),
     winnerSlot: v.optional(v.number()),

@@ -1,9 +1,11 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   boardIdValidator,
+  gameModeValidator,
   gameStatusValidator,
+  playerSlotValidator,
   playStateValidator,
   positionValidator,
   towerSpecValidator,
@@ -26,7 +28,7 @@ import {
   playStateFromStored,
 } from "../lib/game/applyMove";
 import { rankLabel } from "../lib/game/scoring";
-import type { LastMove, TowerSpec } from "../lib/game/types";
+import type { LastMove, PlayerSlot, TowerSpec } from "../lib/game/types";
 
 const playerSummaryValidator = v.object({
   slot: v.number(),
@@ -37,6 +39,7 @@ const playerSummaryValidator = v.object({
 const lobbyValidator = v.object({
   _id: v.id("games"),
   code: v.string(),
+  mode: gameModeValidator,
   status: gameStatusValidator,
   players: v.array(playerSummaryValidator),
   playerCount: v.number(),
@@ -58,6 +61,7 @@ const joinResultValidator = v.object({
 const gameViewValidator = v.object({
   gameId: v.id("games"),
   code: v.string(),
+  mode: gameModeValidator,
   status: gameStatusValidator,
   players: v.array(playerSummaryValidator),
   viewerSlot: v.union(v.number(), v.null()),
@@ -79,6 +83,12 @@ const gameEventViewValidator = v.object({
 });
 
 const gameEventsResultValidator = v.array(gameEventViewValidator);
+
+type GameMode = "multiplayer" | "solo";
+
+function gameMode(game: { mode?: GameMode }): GameMode {
+  return game.mode ?? "multiplayer";
+}
 
 async function uniqueCode(ctx: MutationCtx): Promise<string> {
   for (let attempt = 0; attempt < 10; attempt++) {
@@ -135,6 +145,51 @@ async function clearGameEvents(
   }
 }
 
+async function insertBetaPlayer(
+  ctx: MutationCtx,
+  args: {
+    gameId: Id<"games">;
+    slot: PlayerSlot;
+    displayName: string;
+    now: number;
+  },
+): Promise<void> {
+  const playerToken = generatePlayerToken();
+  const tokenHash = await hashToken(playerToken);
+
+  await ctx.db.insert("players", {
+    gameId: args.gameId,
+    slot: args.slot,
+    displayName: args.displayName,
+    tokenHash,
+    isHost: false,
+    joinedAt: args.now,
+  });
+}
+
+async function actorSlotForMutation(
+  ctx: MutationCtx,
+  game: Doc<"games">,
+  playerToken: string,
+  actingSlot?: PlayerSlot,
+): Promise<PlayerSlot> {
+  const player = await getPlayerForToken(ctx, game._id, playerToken);
+  const requestedSlot = actingSlot ?? (player.slot as PlayerSlot);
+
+  if (gameMode(game) === "solo") {
+    if (!player.isHost) {
+      throw new Error("Only the host can control solo beta seats");
+    }
+    return requestedSlot;
+  }
+
+  if (actingSlot !== undefined && actingSlot !== player.slot) {
+    throw new Error("You cannot act as another player");
+  }
+
+  return player.slot as PlayerSlot;
+}
+
 function describeTower(tower: TowerSpec): string {
   return rankLabel(tower);
 }
@@ -167,6 +222,7 @@ export const createGame = mutation({
 
     const gameId = await ctx.db.insert("games", {
       code,
+      mode: "multiplayer",
       status: "waiting",
       createdAt: now,
       updatedAt: now,
@@ -267,6 +323,58 @@ export const startGame = mutation({
   },
 });
 
+export const startSoloGame = mutation({
+  args: {
+    gameId: v.id("games"),
+    playerToken: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await assertHost(ctx, args.gameId, args.playerToken);
+    const game = await ctx.db.get(args.gameId);
+    if (!game) throw new Error("Game not found");
+    if (game.status !== "waiting") throw new Error("Game already started");
+
+    const players = await getPlayersForGame(ctx, args.gameId);
+    if (players.length !== 1 || !players[0].isHost) {
+      throw new Error("Solo beta starts from a host-only lobby");
+    }
+
+    const now = Date.now();
+    await insertBetaPlayer(ctx, {
+      gameId: args.gameId,
+      slot: 1,
+      displayName: "Beta White",
+      now,
+    });
+    await insertBetaPlayer(ctx, {
+      gameId: args.gameId,
+      slot: 2,
+      displayName: "Beta Grey",
+      now,
+    });
+
+    const playState = createPlayStateFromWaiting();
+
+    await ctx.db.patch(args.gameId, {
+      mode: "solo",
+      status: "setup",
+      playState,
+      updatedAt: now,
+    });
+    await appendGameEvent(ctx, {
+      gameId: args.gameId,
+      kind: "start",
+      actorSlot: null,
+      description: "Solo beta game started",
+      playState,
+      createdAt: now,
+    });
+
+    return null;
+  },
+});
+
 export const rematchGame = mutation({
   args: {
     gameId: v.id("games"),
@@ -312,19 +420,25 @@ export const placeTower = mutation({
   args: {
     gameId: v.id("games"),
     playerToken: v.string(),
+    actingSlot: v.optional(playerSlotValidator),
     boardId: boardIdValidator,
     position: positionValidator,
     tower: towerSpecValidator,
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const player = await getPlayerForToken(ctx, args.gameId, args.playerToken);
     const game = await ctx.db.get(args.gameId);
     if (!game || !game.playState) throw new Error("Game not in progress");
     if (game.status !== "setup") throw new Error("Not in setup phase");
 
+    const actorSlot = await actorSlotForMutation(
+      ctx,
+      game,
+      args.playerToken,
+      args.actingSlot,
+    );
     const state = playStateFromStored(game.playState);
-    const next = applySetupMove(state, player.slot as 0 | 1 | 2, {
+    const next = applySetupMove(state, actorSlot, {
       kind: "setup",
       boardId: args.boardId,
       position: args.position,
@@ -340,7 +454,7 @@ export const placeTower = mutation({
     await appendGameEvent(ctx, {
       gameId: args.gameId,
       kind: "setup",
-      actorSlot: player.slot,
+      actorSlot,
       description: describeLastMove(next.lastMove),
       playState: next,
       createdAt: now,
@@ -354,19 +468,25 @@ export const moveTower = mutation({
   args: {
     gameId: v.id("games"),
     playerToken: v.string(),
+    actingSlot: v.optional(playerSlotValidator),
     boardId: boardIdValidator,
     from: positionValidator,
     to: positionValidator,
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const player = await getPlayerForToken(ctx, args.gameId, args.playerToken);
     const game = await ctx.db.get(args.gameId);
     if (!game || !game.playState) throw new Error("Game not in progress");
     if (game.status !== "playing") throw new Error("Not in play phase");
 
+    const actorSlot = await actorSlotForMutation(
+      ctx,
+      game,
+      args.playerToken,
+      args.actingSlot,
+    );
     const state = playStateFromStored(game.playState);
-    const next = applyPlayMove(state, player.slot as 0 | 1 | 2, {
+    const next = applyPlayMove(state, actorSlot, {
       kind: "move",
       boardId: args.boardId,
       from: args.from,
@@ -383,7 +503,7 @@ export const moveTower = mutation({
     await appendGameEvent(ctx, {
       gameId: args.gameId,
       kind: "move",
-      actorSlot: player.slot,
+      actorSlot,
       description: describeLastMove(next.lastMove),
       playState: next,
       createdAt: now,
@@ -418,6 +538,7 @@ export const getGameByCode = query({
     return {
       _id: game._id,
       code: game.code,
+      mode: gameMode(game),
       status: game.status,
       players: players
         .sort((a, b) => a.slot - b.slot)
@@ -462,6 +583,7 @@ export const getGame = query({
     return {
       gameId: game._id,
       code: game.code,
+      mode: gameMode(game),
       status: game.status,
       players: players
         .sort((a, b) => a.slot - b.slot)
@@ -507,6 +629,7 @@ export const getGameByCodeAndToken = query({
     return {
       gameId: game._id,
       code: game.code,
+      mode: gameMode(game),
       status: game.status,
       players: players
         .sort((a, b) => a.slot - b.slot)
