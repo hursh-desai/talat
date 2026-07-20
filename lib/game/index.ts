@@ -6,3 +6,4 @@ export * from "./setup";
 export * from "./frozen";
 export * from "./scoring";
 export * from "./applyMove";
+export * from "./engine";

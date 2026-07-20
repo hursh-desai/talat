@@ -3,6 +3,7 @@ import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   boardIdValidator,
+  gameCommandValidator,
   gameModeValidator,
   gameStatusValidator,
   playerSlotValidator,
@@ -21,14 +22,14 @@ import {
   getPlayersForGame,
   assertHost,
 } from "./lib/gameHelpers";
+import { playStateFromStored } from "../lib/game/applyMove";
 import {
-  applyPlayMove,
-  applySetupMove,
-  createPlayStateFromWaiting,
-  playStateFromStored,
-} from "../lib/game/applyMove";
-import { rankLabel } from "../lib/game/scoring";
-import type { LastMove, PlayerSlot, TowerSpec } from "../lib/game/types";
+  applyCommand,
+  type EngineEvent,
+  type GameCommand,
+  type GameState,
+} from "../lib/game/engine";
+import type { PlayerSlot } from "../lib/game/types";
 
 const playerSummaryValidator = v.object({
   slot: v.number(),
@@ -75,9 +76,25 @@ const gameEventViewValidator = v.object({
   _creationTime: v.number(),
   gameId: v.id("games"),
   sequence: v.number(),
-  kind: v.union(v.literal("start"), v.literal("setup"), v.literal("move")),
+  kind: v.union(
+    v.literal("start"),
+    v.literal("setup"),
+    v.literal("move"),
+    v.literal("rematch"),
+  ),
+  commandKind: v.optional(
+    v.union(
+      v.literal("start"),
+      v.literal("rematch"),
+      v.literal("setup.place"),
+      v.literal("play.move"),
+    ),
+  ),
+  command: v.optional(gameCommandValidator),
   actorSlot: v.union(v.number(), v.null()),
   description: v.string(),
+  schemaVersion: v.optional(v.number()),
+  stateVersion: v.optional(v.number()),
   playState: playStateValidator,
   createdAt: v.number(),
 });
@@ -118,31 +135,25 @@ async function appendGameEvent(
   ctx: MutationCtx,
   args: {
     gameId: Id<"games">;
-    kind: "start" | "setup" | "move";
-    actorSlot: number | null;
-    description: string;
-    playState: NonNullable<Awaited<ReturnType<typeof createPlayStateFromWaiting>>>;
+    event: EngineEvent;
+    command: GameCommand;
+    playState: GameState;
     createdAt: number;
   },
 ): Promise<void> {
   await ctx.db.insert("gameEvents", {
-    ...args,
+    gameId: args.gameId,
     sequence: await nextEventSequence(ctx, args.gameId),
+    kind: args.event.kind,
+    commandKind: args.event.commandKind,
+    command: args.command,
+    actorSlot: args.event.actorSlot,
+    description: args.event.description,
+    schemaVersion: args.event.schemaVersion,
+    stateVersion: args.event.stateVersion,
+    playState: args.playState,
+    createdAt: args.createdAt,
   });
-}
-
-async function clearGameEvents(
-  ctx: MutationCtx,
-  gameId: Id<"games">,
-): Promise<void> {
-  const existing = await ctx.db
-    .query("gameEvents")
-    .withIndex("by_game_and_sequence", (q) => q.eq("gameId", gameId))
-    .take(250);
-
-  for (const event of existing) {
-    await ctx.db.delete(event._id);
-  }
 }
 
 async function insertBetaPlayer(
@@ -188,22 +199,6 @@ async function actorSlotForMutation(
   }
 
   return player.slot as PlayerSlot;
-}
-
-function describeTower(tower: TowerSpec): string {
-  return rankLabel(tower);
-}
-
-function describeLastMove(lastMove: LastMove | null): string {
-  if (!lastMove) return "Game started";
-  if (lastMove.kind === "setup") {
-    return `Placed ${describeTower(lastMove.tower)} on ${lastMove.boardId}`;
-  }
-
-  const capture = lastMove.captured
-    ? ` and captured ${describeTower(lastMove.captured)}`
-    : "";
-  return `Moved on ${lastMove.boardId}${capture}`;
 }
 
 export const createGame = mutation({
@@ -302,20 +297,20 @@ export const startGame = mutation({
       throw new Error("Need 3 players to start");
     }
 
-    const playState = createPlayStateFromWaiting();
+    const command: GameCommand = { kind: "start", mode: "multiplayer" };
+    const result = applyCommand(null, command);
     const now = Date.now();
 
     await ctx.db.patch(args.gameId, {
       status: "setup",
-      playState,
+      playState: result.state,
       updatedAt: now,
     });
     await appendGameEvent(ctx, {
       gameId: args.gameId,
-      kind: "start",
-      actorSlot: null,
-      description: "Game started",
-      playState,
+      event: result.event,
+      command,
+      playState: result.state,
       createdAt: now,
     });
 
@@ -354,20 +349,20 @@ export const startSoloGame = mutation({
       now,
     });
 
-    const playState = createPlayStateFromWaiting();
+    const command: GameCommand = { kind: "start", mode: "solo" };
+    const result = applyCommand(null, command);
 
     await ctx.db.patch(args.gameId, {
       mode: "solo",
       status: "setup",
-      playState,
+      playState: result.state,
       updatedAt: now,
     });
     await appendGameEvent(ctx, {
       gameId: args.gameId,
-      kind: "start",
-      actorSlot: null,
-      description: "Solo beta game started",
-      playState,
+      event: result.event,
+      command,
+      playState: result.state,
       createdAt: now,
     });
 
@@ -385,6 +380,7 @@ export const rematchGame = mutation({
     await assertHost(ctx, args.gameId, args.playerToken);
     const game = await ctx.db.get(args.gameId);
     if (!game) throw new Error("Game not found");
+    if (!game.playState) throw new Error("Game not in progress");
     if (game.status !== "finished") {
       throw new Error("Rematch is available after the game ends");
     }
@@ -394,21 +390,20 @@ export const rematchGame = mutation({
       throw new Error("Need 3 players for a rematch");
     }
 
-    const playState = createPlayStateFromWaiting();
+    const command: GameCommand = { kind: "rematch" };
+    const result = applyCommand(playStateFromStored(game.playState), command);
     const now = Date.now();
-    await clearGameEvents(ctx, args.gameId);
     await ctx.db.patch(args.gameId, {
       status: "setup",
-      playState,
+      playState: result.state,
       winnerSlot: undefined,
       updatedAt: now,
     });
     await appendGameEvent(ctx, {
       gameId: args.gameId,
-      kind: "start",
-      actorSlot: null,
-      description: "Rematch started",
-      playState,
+      event: result.event,
+      command,
+      playState: result.state,
       createdAt: now,
     });
 
@@ -437,26 +432,26 @@ export const placeTower = mutation({
       args.playerToken,
       args.actingSlot,
     );
-    const state = playStateFromStored(game.playState);
-    const next = applySetupMove(state, actorSlot, {
-      kind: "setup",
+    const command: GameCommand = {
+      kind: "setup.place",
+      actorSlot,
       boardId: args.boardId,
       position: args.position,
       tower: args.tower,
-    });
+    };
+    const result = applyCommand(playStateFromStored(game.playState), command);
 
     const now = Date.now();
     await ctx.db.patch(args.gameId, {
-      playState: next,
-      status: next.status === "playing" ? "playing" : "setup",
+      playState: result.state,
+      status: result.state.status === "playing" ? "playing" : "setup",
       updatedAt: now,
     });
     await appendGameEvent(ctx, {
       gameId: args.gameId,
-      kind: "setup",
-      actorSlot,
-      description: describeLastMove(next.lastMove),
-      playState: next,
+      event: result.event,
+      command,
+      playState: result.state,
       createdAt: now,
     });
 
@@ -485,27 +480,27 @@ export const moveTower = mutation({
       args.playerToken,
       args.actingSlot,
     );
-    const state = playStateFromStored(game.playState);
-    const next = applyPlayMove(state, actorSlot, {
-      kind: "move",
+    const command: GameCommand = {
+      kind: "play.move",
+      actorSlot,
       boardId: args.boardId,
       from: args.from,
       to: args.to,
-    });
+    };
+    const result = applyCommand(playStateFromStored(game.playState), command);
 
     const now = Date.now();
     await ctx.db.patch(args.gameId, {
-      playState: next,
-      status: next.status,
-      winnerSlot: next.winnerSlot ?? undefined,
+      playState: result.state,
+      status: result.state.status,
+      winnerSlot: result.state.winnerSlot ?? undefined,
       updatedAt: now,
     });
     await appendGameEvent(ctx, {
       gameId: args.gameId,
-      kind: "move",
-      actorSlot,
-      description: describeLastMove(next.lastMove),
-      playState: next,
+      event: result.event,
+      command,
+      playState: result.state,
       createdAt: now,
     });
 

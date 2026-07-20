@@ -11,6 +11,12 @@ import {
   playStateFromStored,
   type PlayState,
 } from "../lib/game/applyMove";
+import {
+  applyCommand,
+  stableSerializeGameState,
+  type GameCommand,
+  type GameState,
+} from "../lib/game/engine";
 import type { PlayerSlot } from "../lib/game/types";
 import { hashToken } from "./lib/tokens";
 
@@ -144,6 +150,50 @@ describe("solo beta mode", () => {
       kind: "move",
       slot: actorSlot,
     });
+    expect(state.stateVersion).toBeGreaterThan(0);
+  });
+
+  it("replays stored command events to the current snapshot", async () => {
+    const t = testBackend();
+    const created = await t.mutation(api.games.createGame, {
+      displayName: "Replay",
+    });
+    await t.mutation(api.games.startSoloGame, {
+      gameId: created.gameId,
+      playerToken: created.playerToken,
+    });
+    let state = await soloState(t, created.code, created.playerToken);
+
+    for (let index = 0; index < 3; index++) {
+      const actorSlot = state.currentTurnSlot;
+      const action = getValidSetupActions(state, actorSlot)[0];
+      await t.mutation(api.games.placeTower, {
+        gameId: created.gameId,
+        playerToken: created.playerToken,
+        actingSlot: actorSlot,
+        boardId: action.boardId,
+        position: action.position,
+        tower: action.tower,
+      });
+      state = await soloState(t, created.code, created.playerToken);
+    }
+
+    const events = await t.query(api.games.getGameEvents, {
+      gameId: created.gameId,
+      playerToken: created.playerToken,
+    });
+
+    let replayed: GameState | null = null;
+    for (const event of events) {
+      expect(event.command).toBeDefined();
+      replayed = applyCommand(replayed, event.command as GameCommand).state;
+      expect(event.stateVersion).toBe(replayed.stateVersion);
+    }
+
+    expect(replayed).not.toBeNull();
+    expect(stableSerializeGameState(replayed!)).toBe(
+      stableSerializeGameState(state),
+    );
   });
 
   it("rejects non-host and stale tokens for solo seat control", async () => {

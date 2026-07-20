@@ -8,6 +8,17 @@ export const boardIdValidator = v.union(
   v.literal("board12"),
 );
 
+export const gameModeValidator = v.union(
+  v.literal("multiplayer"),
+  v.literal("solo"),
+);
+
+export const playerSlotValidator = v.union(
+  v.literal(0),
+  v.literal(1),
+  v.literal(2),
+);
+
 export const towerSpecValidator = v.object({
   height: heightValidator,
   sides: sidesValidator,
@@ -27,6 +38,38 @@ export const positionValidator = v.object({
   row: v.number(),
   col: v.number(),
 });
+
+export const startCommandValidator = v.object({
+  kind: v.literal("start"),
+  mode: gameModeValidator,
+});
+
+export const rematchCommandValidator = v.object({
+  kind: v.literal("rematch"),
+});
+
+export const setupPlaceCommandValidator = v.object({
+  kind: v.literal("setup.place"),
+  actorSlot: playerSlotValidator,
+  boardId: boardIdValidator,
+  position: positionValidator,
+  tower: towerSpecValidator,
+});
+
+export const playMoveCommandValidator = v.object({
+  kind: v.literal("play.move"),
+  actorSlot: playerSlotValidator,
+  boardId: boardIdValidator,
+  from: positionValidator,
+  to: positionValidator,
+});
+
+export const gameCommandValidator = v.union(
+  startCommandValidator,
+  rematchCommandValidator,
+  setupPlaceCommandValidator,
+  playMoveCommandValidator,
+);
 
 export const boardsValidator = v.object({
   board01: boardValidator,
@@ -58,6 +101,8 @@ export const lastMoveValidator = v.union(
 );
 
 export const playStateValidator = v.object({
+  schemaVersion: v.optional(v.number()),
+  stateVersion: v.optional(v.number()),
   boardState: gameBoardStateValidator,
   phase: v.union(v.literal("setup"), v.literal("play")),
   currentTurnSlot: v.number(),
@@ -80,15 +125,4 @@ export const gameStatusValidator = v.union(
   v.literal("setup"),
   v.literal("playing"),
   v.literal("finished"),
-);
-
-export const gameModeValidator = v.union(
-  v.literal("multiplayer"),
-  v.literal("solo"),
-);
-
-export const playerSlotValidator = v.union(
-  v.literal(0),
-  v.literal(1),
-  v.literal(2),
 );

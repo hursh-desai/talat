@@ -20,6 +20,8 @@ import { boardsForSlot, createInitialBoardState } from "./types";
 import { startingRow } from "./geometry";
 
 export type PlayState = {
+  schemaVersion: number;
+  stateVersion: number;
   boardState: GameBoardState;
   phase: "setup" | "play";
   currentTurnSlot: PlayerSlot;
@@ -37,6 +39,8 @@ const BOARD_IDS: BoardId[] = ["board01", "board02", "board12"];
 
 export function createPlayStateFromWaiting(): PlayState {
   return {
+    schemaVersion: 1,
+    stateVersion: 0,
     boardState: createInitialBoardState(),
     phase: "setup",
     currentTurnSlot: 0,
@@ -239,9 +243,11 @@ export function getValidPlayActions(
 }
 
 export function playStateFromStored(stored: unknown): PlayState {
-  const s = stored as PlayState;
+  const s = stored as Partial<PlayState> & Omit<PlayState, "schemaVersion" | "stateVersion">;
   return {
     ...s,
+    schemaVersion: s.schemaVersion ?? 1,
+    stateVersion: s.stateVersion ?? 0,
     currentTurnSlot: s.currentTurnSlot as PlayerSlot,
     winnerSlot: s.winnerSlot as PlayerSlot | null,
   };

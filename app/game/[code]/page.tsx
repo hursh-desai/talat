@@ -43,6 +43,25 @@ export default function GamePage({
     );
   }
 
+  const gameView = (
+    <GameView
+      gameId={game.gameId}
+      code={game.code}
+      mode={game.mode}
+      status={game.status}
+      players={game.players}
+      viewerSlot={game.viewerSlot}
+      isHost={game.isHost}
+      playerToken={playerToken}
+      playState={game.playState ? playStateFromStored(game.playState) : null}
+      winnerSlot={game.winnerSlot}
+    />
+  );
+
+  if (game.status !== "waiting") {
+    return <div className="h-dvh w-full overflow-hidden">{gameView}</div>;
+  }
+
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 px-3 py-3 sm:px-4 sm:py-6">
       <div className="mb-3 flex items-center justify-between sm:mb-5">
@@ -56,20 +75,7 @@ export default function GamePage({
         </div>
       </div>
 
-      <GameView
-        gameId={game.gameId}
-        code={game.code}
-        mode={game.mode}
-        status={game.status}
-        players={game.players}
-        viewerSlot={game.viewerSlot}
-        isHost={game.isHost}
-        playerToken={playerToken}
-        playState={
-          game.playState ? playStateFromStored(game.playState) : null
-        }
-        winnerSlot={game.winnerSlot}
-      />
+      {gameView}
     </div>
   );
 }

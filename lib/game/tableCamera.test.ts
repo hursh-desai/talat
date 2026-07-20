@@ -1,17 +1,13 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
+import type { BoardId } from "./types";
 import {
-  BATTLEFIELD_CENTER,
-  CAMERA_PRESETS,
-  PLAYER_CAMERA_ANGLES,
+  BASE_BOARD_LAYOUT,
   battlefieldRimCorners,
-  cameraAngleForSlot,
-  resolveCameraFrame,
-  type CameraAngle,
+  boardLayoutForFocus,
+  resolveWarTableFrame,
   type CameraFrame,
 } from "./tableCamera";
-
-const CAMERA_ANGLES = Object.keys(CAMERA_PRESETS) as CameraAngle[];
 
 const VIEWPORTS = {
   screenshot: 1724 / 1088,
@@ -20,24 +16,23 @@ const VIEWPORTS = {
   tallMobile: 390 / 844,
 };
 
-function makeCamera(frame: CameraFrame, aspect: number): THREE.Camera {
-  let camera: THREE.Camera;
+const BOARD_IDS: BoardId[] = ["board01", "board02", "board12"];
 
-  if (frame.kind === "perspective") {
-    camera = new THREE.PerspectiveCamera(frame.fov, aspect, 0.1, 100);
-  } else {
-    const viewHeight = frame.viewWidth / aspect;
-    camera = new THREE.OrthographicCamera(
-      -frame.viewWidth / 2,
-      frame.viewWidth / 2,
-      viewHeight / 2,
-      -viewHeight / 2,
-      0.1,
-      100,
-    );
-    camera.up.set(...frame.up);
-  }
+function makeCamera(
+  frame: CameraFrame,
+  aspect: number,
+): THREE.OrthographicCamera {
+  const viewHeight = frame.viewWidth / aspect;
+  const camera = new THREE.OrthographicCamera(
+    -frame.viewWidth / 2,
+    frame.viewWidth / 2,
+    viewHeight / 2,
+    -viewHeight / 2,
+    0.1,
+    100,
+  );
 
+  camera.up.set(...frame.up);
   camera.position.set(...frame.position);
   camera.lookAt(...frame.target);
   camera.updateProjectionMatrix();
@@ -46,42 +41,59 @@ function makeCamera(frame: CameraFrame, aspect: number): THREE.Camera {
   return camera;
 }
 
-function projectedCorners(angle: CameraAngle, aspect: number): THREE.Vector3[] {
-  const camera = makeCamera(resolveCameraFrame(angle, aspect), aspect);
-  return battlefieldRimCorners().map((point) =>
+function projectedCorners(
+  aspect: number,
+  focusedBoardId: BoardId | null = null,
+): THREE.Vector3[] {
+  const camera = makeCamera(
+    resolveWarTableFrame(aspect, focusedBoardId),
+    aspect,
+  );
+  return battlefieldRimCorners(focusedBoardId).map((point) =>
     new THREE.Vector3(...point).project(camera),
   );
 }
 
-describe("table camera model", () => {
-  it("offers three player perspectives and one bird's-eye map", () => {
-    expect(CAMERA_ANGLES).toEqual(["black", "white", "grey", "map"]);
-    expect(cameraAngleForSlot(0)).toBe("black");
-    expect(cameraAngleForSlot(1)).toBe("white");
-    expect(cameraAngleForSlot(2)).toBe("grey");
-    expect(new Set(Object.values(PLAYER_CAMERA_ANGLES)).size).toBe(3);
-    expect(CAMERA_PRESETS.map.kind).toBe("orthographic");
+describe("war table camera model", () => {
+  it("uses one persistent triangular war-table layout", () => {
+    expect(BASE_BOARD_LAYOUT.board02.position[2]).toBeGreaterThan(
+      BASE_BOARD_LAYOUT.board01.position[2],
+    );
+    expect(BASE_BOARD_LAYOUT.board02.position[2]).toBeGreaterThan(
+      BASE_BOARD_LAYOUT.board12.position[2],
+    );
+    expect(BASE_BOARD_LAYOUT.board02.scale).toBeGreaterThan(
+      BASE_BOARD_LAYOUT.board01.scale,
+    );
+    expect(BASE_BOARD_LAYOUT.board02.scale).toBeGreaterThan(
+      BASE_BOARD_LAYOUT.board12.scale,
+    );
+    expect(BASE_BOARD_LAYOUT.board01.rotationY).toBeLessThan(0);
+    expect(BASE_BOARD_LAYOUT.board12.rotationY).toBeGreaterThan(0);
   });
 
-  it("places each player camera on a different side of the table", () => {
-    const black = CAMERA_PRESETS.black.desktop.position;
-    const white = CAMERA_PRESETS.white.desktop.position;
-    const grey = CAMERA_PRESETS.grey.desktop.position;
+  it("focuses a board with scale and lift instead of switching cameras", () => {
+    const base = boardLayoutForFocus("board01", null);
+    const focused = boardLayoutForFocus("board01", "board01");
+    const receded = boardLayoutForFocus("board01", "board02");
 
-    expect(black[0]).toBeLessThan(BATTLEFIELD_CENTER[0]);
-    expect(white[2]).toBeLessThan(BATTLEFIELD_CENTER[2]);
-    expect(grey[0]).toBeGreaterThan(BATTLEFIELD_CENTER[0]);
+    expect(focused.scale).toBeGreaterThan(base.scale);
+    expect(focused.position[1]).toBeGreaterThan(base.position[1]);
+    expect(receded.scale).toBeLessThan(base.scale);
   });
 
-  it("keeps the whole three-board battlefield in frame for every camera", () => {
+  it("keeps every board in frame for the default and focused states", () => {
     for (const [viewportName, aspect] of Object.entries(VIEWPORTS)) {
-      for (const angle of CAMERA_ANGLES) {
-        const corners = projectedCorners(angle, aspect);
+      for (const focusedBoardId of [null, ...BOARD_IDS]) {
+        const corners = projectedCorners(aspect, focusedBoardId);
         const maxAbs = Math.max(
           ...corners.flatMap(({ x, y }) => [Math.abs(x), Math.abs(y)]),
         );
 
-        expect(maxAbs, `${angle} ${viewportName}`).toBeLessThanOrEqual(0.98);
+        expect(
+          maxAbs,
+          `${viewportName} focus=${focusedBoardId ?? "none"}`,
+        ).toBeLessThanOrEqual(0.98);
       }
     }
   });
