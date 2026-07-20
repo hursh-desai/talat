@@ -2,7 +2,8 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useMutation } from "convex/react";
-import { History, Map, Orbit, Telescope, X } from "lucide-react";
+import { Circle, History, Map, X } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -26,12 +27,13 @@ import { Scoreboard } from "./Scoreboard";
 import { GameOverModal } from "./GameOverModal";
 import { GameTimeline } from "./GameTimeline";
 import { Lobby } from "./Lobby";
-import { TableScene, type CameraAngle } from "./TableScene";
+import { TableScene } from "./TableScene";
 import { TowerPiece, towerLabel } from "./Tower";
 import { slotLabel } from "./Tower";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { cameraAngleForSlot, type CameraAngle } from "@/lib/game/tableCamera";
 
 type GameViewProps = {
   gameId: Id<"games">;
@@ -54,11 +56,28 @@ type Selection =
 const CAMERA_OPTIONS: {
   angle: CameraAngle;
   label: string;
-  Icon: typeof Telescope;
+  Icon: LucideIcon;
+  iconClassName?: string;
 }[] = [
-  { angle: "original", label: "Original camera", Icon: Telescope },
-  { angle: "table", label: "Whole table camera", Icon: Orbit },
-  { angle: "overhead", label: "Overhead camera", Icon: Map },
+  {
+    angle: "black",
+    label: "Black perspective",
+    Icon: Circle,
+    iconClassName: "fill-[#171512] text-[#d9bb62]",
+  },
+  {
+    angle: "white",
+    label: "White perspective",
+    Icon: Circle,
+    iconClassName: "fill-[#f5f5f5] text-[#888]",
+  },
+  {
+    angle: "grey",
+    label: "Grey perspective",
+    Icon: Circle,
+    iconClassName: "fill-[#6b7280] text-[#d9bb62]",
+  },
+  { angle: "map", label: "Bird's-eye map", Icon: Map },
 ];
 
 function positionLabel(position: Position): string {
@@ -77,6 +96,7 @@ export function GameView({
   playState: rawPlayState,
   winnerSlot,
 }: GameViewProps) {
+  const viewer = viewerSlot as PlayerSlot | null;
   const startGame = useMutation(api.games.startGame);
   const startSoloGame = useMutation(api.games.startSoloGame);
   const rematchGame = useMutation(api.games.rematchGame);
@@ -88,14 +108,16 @@ export function GameView({
   const [startingSolo, setStartingSolo] = useState(false);
   const [rematching, setRematching] = useState(false);
   const [pending, setPending] = useState(false);
-  const [cameraAngle, setCameraAngle] = useState<CameraAngle>("original");
+  const [cameraOverride, setCameraOverride] = useState<CameraAngle | null>(
+    null,
+  );
+  const cameraAngle = cameraOverride ?? cameraAngleForSlot(viewer);
 
   const playState = useMemo(
     () => (rawPlayState ? playStateFromStored(rawPlayState) : null),
     [rawPlayState],
   );
 
-  const viewer = viewerSlot as PlayerSlot | null;
   const isSoloHost = mode === "solo" && isHost;
   const controlSlot =
     isSoloHost && playState
@@ -483,7 +505,7 @@ export function GameView({
             )}
 
             <div className="absolute left-3 top-3 z-30 flex rounded-md border border-black/35 bg-[#120d08]/76 p-1 shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur">
-              {CAMERA_OPTIONS.map(({ angle, label, Icon }) => {
+              {CAMERA_OPTIONS.map(({ angle, label, Icon, iconClassName }) => {
                 const active = cameraAngle === angle;
 
                 return (
@@ -494,7 +516,9 @@ export function GameView({
                     title={label}
                     aria-pressed={active}
                     data-testid={`camera-${angle}`}
-                    onClick={() => setCameraAngle(angle)}
+                    onClick={() => {
+                      setCameraOverride(angle);
+                    }}
                     className={cn(
                       "grid h-8 w-8 place-items-center rounded-sm border transition",
                       active
@@ -502,7 +526,10 @@ export function GameView({
                         : "border-transparent text-white/60 hover:border-white/18 hover:bg-white/8 hover:text-white",
                     )}
                   >
-                    <Icon className="h-4 w-4" aria-hidden="true" />
+                    <Icon
+                      className={cn("h-4 w-4", iconClassName)}
+                      aria-hidden="true"
+                    />
                   </button>
                 );
               })}

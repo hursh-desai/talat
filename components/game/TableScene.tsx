@@ -9,6 +9,16 @@ import type {
   PlayerSlot,
   Position,
 } from "@/lib/game/types";
+import {
+  BOARD_INDEX,
+  BOARD_LAYOUT,
+  BOARD_RENDER_ORDER,
+  CELL_WORLD_SIZE,
+  BOARD_WORLD_SIZE,
+  CAMERA_PRESETS,
+  resolveCameraFrame,
+  type CameraAngle,
+} from "@/lib/game/tableCamera";
 import { playersOnBoard } from "@/lib/game/types";
 import { startingRow } from "@/lib/game/geometry";
 
@@ -26,68 +36,10 @@ type TableSceneProps = {
   ) => void;
 };
 
-export type CameraAngle = "original" | "table" | "overhead";
-
-const BOARD_ORDER: BoardId[] = ["board01", "board02", "board12"];
-const BOARD_INDEX: Record<BoardId, number> = {
-  board01: 0,
-  board02: 1,
-  board12: 2,
-};
-const CELL_SIZE = 0.64;
-const BOARD_SIZE = CELL_SIZE * 5;
-
-const BOARD_LAYOUT: Record<
-  BoardId,
-  { position: [number, number, number]; rotationY: number }
-> = {
-  board01: { position: [-2.28, 0, -1.5], rotationY: -0.3 },
-  board02: { position: [0, 0, 2.18], rotationY: 0 },
-  board12: { position: [2.28, 0, -1.5], rotationY: 0.3 },
-};
-
 const SLOT_COLORS: Record<PlayerSlot, THREE.ColorRepresentation> = {
   0: "#171512",
   1: "#f2eee3",
   2: "#b7b1a7",
-};
-
-const CAMERA_PRESETS: Record<
-  CameraAngle,
-  | {
-      kind: "perspective";
-      desktop: { fov: number; position: [number, number, number] };
-      narrow: { fov: number; position: [number, number, number] };
-      target: [number, number, number];
-    }
-  | {
-      kind: "orthographic";
-      desktop: { viewWidth: number; position: [number, number, number] };
-      narrow: { viewWidth: number; position: [number, number, number] };
-      target: [number, number, number];
-      up: [number, number, number];
-    }
-> = {
-  original: {
-    kind: "perspective",
-    desktop: { fov: 42, position: [0, 3.25, 8.05] },
-    narrow: { fov: 56, position: [0, 3.05, 8.65] },
-    target: [0, 0.06, 0.05],
-  },
-  table: {
-    kind: "orthographic",
-    desktop: { viewWidth: 8.9, position: [0, 6.4, 4.9] },
-    narrow: { viewWidth: 8.65, position: [0, 6.6, 5.2] },
-    target: [0, 0, 0.28],
-    up: [0, 1, 0],
-  },
-  overhead: {
-    kind: "orthographic",
-    desktop: { viewWidth: 8.3, position: [0, 9.2, 0.01] },
-    narrow: { viewWidth: 8.15, position: [0, 9.2, 0.01] },
-    target: [0, 0, 0],
-    up: [0, 0, -1],
-  },
 };
 
 function posKey(position: Position): string {
@@ -208,7 +160,11 @@ function addBoard(
   group.userData.boardId = boardId;
 
   const rim = new THREE.Mesh(
-    new THREE.BoxGeometry(BOARD_SIZE + 0.42, 0.08, BOARD_SIZE + 0.42),
+    new THREE.BoxGeometry(
+      BOARD_WORLD_SIZE + 0.42,
+      0.08,
+      BOARD_WORLD_SIZE + 0.42,
+    ),
     materials.rim,
   );
   rim.position.y = 0.02;
@@ -230,7 +186,11 @@ function addBoard(
       const isSelected = selectedKey === key;
 
       const cell = new THREE.Mesh(
-        new THREE.BoxGeometry(CELL_SIZE * 0.94, 0.035, CELL_SIZE * 0.94),
+        new THREE.BoxGeometry(
+          CELL_WORLD_SIZE * 0.94,
+          0.035,
+          CELL_WORLD_SIZE * 0.94,
+        ),
         frozen
           ? materials.frozen
           : isSelected
@@ -242,9 +202,9 @@ function addBoard(
                 : materials.cell,
       );
       cell.position.set(
-        (col - 2) * CELL_SIZE,
+        (col - 2) * CELL_WORLD_SIZE,
         0.085,
-        (row - 2) * CELL_SIZE,
+        (row - 2) * CELL_WORLD_SIZE,
       );
       cell.receiveShadow = true;
       cell.userData = {
@@ -273,7 +233,7 @@ export function TableScene({
   boards,
   frozenBoards,
   interactive = false,
-  cameraAngle = "original",
+  cameraAngle = "black",
   highlightByBoard = {},
   selected,
   onCellClick,
@@ -389,7 +349,7 @@ export function TableScene({
     fillLight.position.set(3.8, 2.2, 2.5);
     scene.add(fillLight);
 
-    for (const boardId of BOARD_ORDER) {
+    for (const boardId of BOARD_RENDER_ORDER) {
       addBoard(scene, {
         boardId,
         boards,
@@ -406,31 +366,27 @@ export function TableScene({
       const width = Math.max(320, Math.round(container.clientWidth));
       const height = Math.max(320, Math.round(container.clientHeight));
       const aspect = width / height;
-      const isNarrow = aspect < 0.9;
-      const preset = CAMERA_PRESETS[cameraAngle];
-
+      const frame = resolveCameraFrame(cameraAngle, aspect);
       const up: [number, number, number] =
-        preset.kind === "orthographic" ? preset.up : [0, 1, 0];
+        frame.kind === "orthographic" ? frame.up : [0, 1, 0];
 
       camera.up.set(...up);
       if (camera instanceof THREE.PerspectiveCamera) {
-        if (preset.kind !== "perspective") return;
-        const nextCamera = isNarrow ? preset.narrow : preset.desktop;
-        camera.position.set(...nextCamera.position);
+        if (frame.kind !== "perspective") return;
+        camera.position.set(...frame.position);
         camera.aspect = aspect;
-        camera.fov = nextCamera.fov;
+        camera.fov = frame.fov;
       } else {
-        if (preset.kind !== "orthographic") return;
-        const nextCamera = isNarrow ? preset.narrow : preset.desktop;
-        camera.position.set(...nextCamera.position);
-        const viewWidth = nextCamera.viewWidth;
+        if (frame.kind !== "orthographic") return;
+        camera.position.set(...frame.position);
+        const viewWidth = frame.viewWidth;
         const viewHeight = viewWidth / aspect;
         camera.left = -viewWidth / 2;
         camera.right = viewWidth / 2;
         camera.top = viewHeight / 2;
         camera.bottom = -viewHeight / 2;
       }
-      camera.lookAt(...preset.target);
+      camera.lookAt(...frame.target);
       renderer.setSize(width, height, false);
       camera.updateProjectionMatrix();
     }
