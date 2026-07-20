@@ -2,9 +2,12 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useMutation } from "convex/react";
+import { Copy, Home, Menu, X } from "lucide-react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { Button } from "@/components/ui/button";
 import {
   getValidPlayActions,
   getValidSetupActions,
@@ -73,6 +76,10 @@ export function GameView({
   const [startingSolo, setStartingSolo] = useState(false);
   const [rematching, setRematching] = useState(false);
   const [pending, setPending] = useState(false);
+  const [awaitingStateVersion, setAwaitingStateVersion] = useState<
+    number | null
+  >(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const playState = useMemo(
     () => (rawPlayState ? playStateFromStored(rawPlayState) : null),
@@ -87,6 +94,10 @@ export function GameView({
     controlSlot !== null &&
     playState.currentTurnSlot === controlSlot &&
     playState.status !== "finished";
+  const isAwaitingServerState =
+    awaitingStateVersion !== null &&
+    playState?.stateVersion === awaitingStateVersion;
+  const interactionLocked = pending || isAwaitingServerState;
 
   const validSetupActions = useMemo(() => {
     if (!playState || controlSlot === null) return [];
@@ -179,6 +190,13 @@ export function GameView({
       : "Finished";
 
   const statusText = `${status}. ${turnText}. ${lastMoveText}.`;
+  const gameDisplay = `Game ${code}`;
+  const phaseDisplay =
+    status === "setup"
+      ? "Setup"
+      : status === "playing"
+        ? "Live"
+        : "Finished";
 
   const handleStart = useCallback(async () => {
     if (!playerToken) return;
@@ -218,6 +236,18 @@ export function GameView({
     }
   }, [gameId, playerToken, rematchGame]);
 
+  const handleCopyInvite = useCallback(async () => {
+    const inviteUrl =
+      typeof window === "undefined" ? code : window.location.href;
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      toast.success("Invite link copied");
+      setMenuOpen(false);
+    } catch {
+      toast.error("Could not copy invite link");
+    }
+  }, [code]);
+
   const submitSetupDrop = useCallback(
     async (tower: TowerSpec, boardId: BoardId, position: Position) => {
       if (
@@ -225,7 +255,7 @@ export function GameView({
         !playState ||
         controlSlot === null ||
         !isMyTurn ||
-        pending ||
+        interactionLocked ||
         status !== "setup"
       ) {
         return;
@@ -239,6 +269,7 @@ export function GameView({
       );
       if (!valid) return;
 
+      setAwaitingStateVersion(playState.stateVersion);
       setPending(true);
       try {
         await placeTower({
@@ -251,6 +282,7 @@ export function GameView({
         });
         setSelection(null);
       } catch (e) {
+        setAwaitingStateVersion(null);
         toast.error(e instanceof Error ? e.message : "Invalid placement");
       } finally {
         setPending(false);
@@ -261,7 +293,7 @@ export function GameView({
       gameId,
       isMyTurn,
       isSoloHost,
-      pending,
+      interactionLocked,
       placeTower,
       playState,
       playerToken,
@@ -282,7 +314,7 @@ export function GameView({
         !playState ||
         controlSlot === null ||
         !isMyTurn ||
-        pending ||
+        interactionLocked ||
         status !== "playing" ||
         piece.ownerSlot !== controlSlot
       ) {
@@ -297,6 +329,7 @@ export function GameView({
       );
       if (!valid) return;
 
+      setAwaitingStateVersion(playState.stateVersion);
       setPending(true);
       try {
         await moveTower({
@@ -309,6 +342,7 @@ export function GameView({
         });
         setSelection(null);
       } catch (e) {
+        setAwaitingStateVersion(null);
         toast.error(e instanceof Error ? e.message : "Invalid move");
       } finally {
         setPending(false);
@@ -320,7 +354,7 @@ export function GameView({
       isMyTurn,
       isSoloHost,
       moveTower,
-      pending,
+      interactionLocked,
       playState,
       playerToken,
       status,
@@ -362,7 +396,7 @@ export function GameView({
         <GameTableCanvas
           boards={playState.boardState.boards}
           frozenBoards={playState.frozenBoards}
-          interactive={!!isMyTurn && !pending}
+          interactive={!!isMyTurn && !interactionLocked}
           setupReserves={
             status === "setup" && controlSlot !== null
               ? playState.boardState.reserves[controlSlot]
@@ -378,13 +412,87 @@ export function GameView({
               ? { boardId: selection.boardId, position: selection.position }
               : null
           }
-          pending={pending}
+          pending={interactionLocked}
           statusText={statusText}
           onReserveDrop={submitSetupDrop}
           onPieceDrop={submitMoveDrop}
           onPieceSelect={handlePieceSelect}
         />
       </section>
+
+      <div className="pointer-events-none absolute left-3 top-3 z-40 flex max-w-[calc(100%-1.5rem)] items-start gap-2 sm:left-4 sm:top-4">
+        <div className="pointer-events-auto relative">
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="outline"
+            aria-label={menuOpen ? "Close game menu" : "Open game menu"}
+            aria-expanded={menuOpen}
+            className="border-black/45 bg-[#120d08]/82 text-[#f3d777] shadow-[0_12px_28px_rgba(0,0,0,0.38)] backdrop-blur hover:border-[#d9bb62]/60 hover:bg-[#1b130c]/92"
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            {menuOpen ? <X /> : <Menu />}
+          </Button>
+
+          {menuOpen && (
+            <div className="absolute left-0 top-9 w-64 rounded-md border border-black/45 bg-[#120d08]/92 p-2 text-sm text-white shadow-[0_18px_44px_rgba(0,0,0,0.5)] backdrop-blur">
+              <div className="border-b border-white/10 px-2 pb-2">
+                <p className="font-semibold text-[#f3d777]">{gameDisplay}</p>
+                <p className="mt-0.5 text-xs text-white/55">{statusText}</p>
+              </div>
+
+              <div className="mt-2 grid gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="justify-start text-white/76 hover:bg-white/10 hover:text-white"
+                  onClick={handleCopyInvite}
+                >
+                  <Copy />
+                  Copy invite link
+                </Button>
+                <Link
+                  href="/"
+                  className="inline-flex h-7 items-center justify-start gap-1 rounded-md px-2.5 text-[0.8rem] font-medium text-white/76 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <Home className="h-3.5 w-3.5" />
+                  Back to lobby
+                </Link>
+              </div>
+
+              <div className="mt-2 border-t border-white/10 px-2 pt-2">
+                <p className="text-[11px] uppercase text-white/38">Seats</p>
+                <div className="mt-1 space-y-1">
+                  {players.map((player) => (
+                    <div
+                      key={player.slot}
+                      className="flex items-center justify-between gap-2 text-xs"
+                    >
+                      <span className="text-white/64">
+                        {slotLabel(player.slot as PlayerSlot)}
+                      </span>
+                      <span className="truncate text-white/86">
+                        {player.displayName}
+                        {player.slot === viewerSlot ? " (you)" : ""}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="pointer-events-auto rounded-md border border-black/40 bg-[#120d08]/78 px-2.5 py-1.5 text-xs text-white shadow-[0_12px_28px_rgba(0,0,0,0.34)] backdrop-blur">
+          <div className="flex max-w-[72vw] items-center gap-2 sm:max-w-none">
+            <span className="font-semibold text-[#f3d777]">{gameDisplay}</span>
+            <span className="h-1 w-1 rounded-full bg-white/35" />
+            <span className="text-white/70">{phaseDisplay}</span>
+            <span className="hidden text-white/45 sm:inline">{turnText}</span>
+          </div>
+        </div>
+      </div>
 
       {status === "finished" && (
         <GameOverModal

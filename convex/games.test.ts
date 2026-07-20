@@ -263,4 +263,35 @@ describe("multiplayer start", () => {
       }),
     ).rejects.toThrow("Need 3 players to start");
   });
+
+  it("returns an already-started result for late join attempts", async () => {
+    const t = testBackend();
+    const created = await t.mutation(api.games.createGame, {
+      displayName: "Host",
+    });
+
+    const second = await t.mutation(api.games.joinGame, {
+      code: created.code,
+      displayName: "Second",
+    });
+    const third = await t.mutation(api.games.joinGame, {
+      code: created.code,
+      displayName: "Third",
+    });
+
+    expect(second.status).toBe("joined");
+    expect(third.status).toBe("joined");
+
+    await t.mutation(api.games.startGame, {
+      gameId: created.gameId,
+      playerToken: created.playerToken,
+    });
+
+    await expect(
+      t.mutation(api.games.joinGame, {
+        code: created.code,
+        displayName: "Late",
+      }),
+    ).resolves.toEqual({ status: "already_started" });
+  });
 });

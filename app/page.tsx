@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { CircleAlert } from "lucide-react";
 import { useState } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
@@ -8,8 +9,16 @@ import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { savePlayerSessionByCode } from "@/lib/playerStorage";
+import {
+  loadPlayerSessionByCode,
+  savePlayerSessionByCode,
+} from "@/lib/playerStorage";
 import { RulesTutorial } from "@/components/game/RulesTutorial";
+
+type JoinNotice = {
+  kind: "already_started";
+  code: string;
+} | null;
 
 export default function HomePage() {
   const router = useRouter();
@@ -18,6 +27,7 @@ export default function HomePage() {
   const [displayName, setDisplayName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [loading, setLoading] = useState<"create" | "join" | null>(null);
+  const [joinNotice, setJoinNotice] = useState<JoinNotice>(null);
 
   async function handleCreate() {
     const name = displayName.trim();
@@ -45,17 +55,31 @@ export default function HomePage() {
   async function handleJoin() {
     const name = displayName.trim();
     const code = joinCode.trim().toUpperCase();
-    if (!name) {
-      toast.error("Enter a display name");
-      return;
-    }
+    setJoinNotice(null);
+
     if (!code) {
       toast.error("Enter a game code");
       return;
     }
+
+    if (loadPlayerSessionByCode(code)) {
+      router.push(`/game/${code}`);
+      return;
+    }
+
+    if (!name) {
+      toast.error("Enter a display name");
+      return;
+    }
+
     setLoading("join");
     try {
       const result = await joinGame({ code, displayName: name });
+      if (result.status === "already_started") {
+        setJoinNotice({ kind: "already_started", code });
+        return;
+      }
+
       savePlayerSessionByCode(
         code,
         result.gameId,
@@ -93,7 +117,10 @@ export default function HomePage() {
             </label>
             <Input
               value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
+              onChange={(e) => {
+                setDisplayName(e.target.value);
+                setJoinNotice(null);
+              }}
               placeholder="Your name"
               className="border-white/20 bg-black/40"
               maxLength={24}
@@ -123,12 +150,33 @@ export default function HomePage() {
             </label>
             <Input
               value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+              onChange={(e) => {
+                setJoinCode(e.target.value.toUpperCase());
+                setJoinNotice(null);
+              }}
               placeholder="ABC123"
               className="border-white/20 bg-black/40 font-mono uppercase"
               maxLength={6}
             />
           </div>
+
+          {joinNotice?.kind === "already_started" && (
+            <div
+              role="alert"
+              className="flex gap-2 rounded-md border border-[#d9bb62]/40 bg-[#d9bb62]/10 p-3 text-sm text-white"
+            >
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-[#f3d777]" />
+              <div>
+                <p className="font-medium text-[#f3d777]">
+                  Game {joinNotice.code} is already in play
+                </p>
+                <p className="mt-1 text-white/65">
+                  New players can only join before the host starts the game.
+                  Ask for a fresh code to take a seat.
+                </p>
+              </div>
+            </div>
+          )}
 
           <Button
             variant="outline"

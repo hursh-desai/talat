@@ -53,11 +53,17 @@ const createResultValidator = v.object({
   slot: v.number(),
 });
 
-const joinResultValidator = v.object({
-  gameId: v.id("games"),
-  playerToken: v.string(),
-  slot: v.number(),
-});
+const joinResultValidator = v.union(
+  v.object({
+    status: v.literal("joined"),
+    gameId: v.id("games"),
+    playerToken: v.string(),
+    slot: v.number(),
+  }),
+  v.object({
+    status: v.literal("already_started"),
+  }),
+);
 
 const gameViewValidator = v.object({
   gameId: v.id("games"),
@@ -248,7 +254,7 @@ export const joinGame = mutation({
 
     const game = await getGameByCodeOrThrow(ctx, args.code);
     if (game.status !== "waiting") {
-      throw new Error("Game already started");
+      return { status: "already_started" as const };
     }
 
     const players = await getPlayersForGame(ctx, game._id);
@@ -276,7 +282,7 @@ export const joinGame = mutation({
 
     await ctx.db.patch(game._id, { updatedAt: now });
 
-    return { gameId: game._id, playerToken, slot };
+    return { status: "joined" as const, gameId: game._id, playerToken, slot };
   },
 });
 

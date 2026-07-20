@@ -17,9 +17,9 @@ import type {
 } from "@/lib/game/types";
 import {
   BOARD_INDEX,
-  BOARD_RENDER_ORDER,
   BOARD_RIM_SIZE,
   CELL_WORLD_SIZE,
+  boardRenderOrderForPerspective,
   boardLayoutForFocus,
   resolveWarTableFrame,
   type Vector3Tuple,
@@ -84,10 +84,18 @@ const SLOT_ACCENTS: Record<PlayerSlot, string> = {
   2: "#b8c4cc",
 };
 
-const PLAYER_TABLE_POSITIONS: Record<PlayerSlot, Vector3Tuple> = {
-  0: [-4.4, 0.02, 2.9],
-  1: [0, 0.02, -4.25],
-  2: [4.4, 0.02, 2.9],
+type PlayerTableStation = "near" | "left" | "far";
+
+const PLAYER_HAND_POSITIONS: Record<PlayerTableStation, Vector3Tuple> = {
+  near: [0.02, 0.02, 3.42],
+  left: [-2.78, 0.06, -0.52],
+  far: [2.0, 0.08, -2.04],
+};
+
+const CAPTURE_RACK_POSITIONS: Record<PlayerTableStation, Vector3Tuple> = {
+  near: [2.5, 0.05, 2.34],
+  left: [-2.92, 0.08, 0.06],
+  far: [2.28, 0.1, -1.52],
 };
 
 const BOARD_LABELS: Record<BoardId, string> = {
@@ -102,6 +110,33 @@ function posKey(position: Position): string {
 
 function samePosition(a: Position, b: Position): boolean {
   return a.row === b.row && a.col === b.col;
+}
+
+function clockwiseNext(slot: PlayerSlot): PlayerSlot {
+  return ((slot + 1) % 3) as PlayerSlot;
+}
+
+function tableStationForSlot(
+  slot: PlayerSlot,
+  perspectiveSlot: PlayerSlot,
+): PlayerTableStation {
+  if (slot === perspectiveSlot) return "near";
+  if (slot === clockwiseNext(perspectiveSlot)) return "left";
+  return "far";
+}
+
+function playerHandPosition(
+  slot: PlayerSlot,
+  perspectiveSlot: PlayerSlot,
+): Vector3Tuple {
+  return PLAYER_HAND_POSITIONS[tableStationForSlot(slot, perspectiveSlot)];
+}
+
+function captureRackPosition(
+  slot: PlayerSlot,
+  perspectiveSlot: PlayerSlot,
+): Vector3Tuple {
+  return CAPTURE_RACK_POSITIONS[tableStationForSlot(slot, perspectiveSlot)];
 }
 
 function cellPosition(position: Position): [number, number, number] {
@@ -153,8 +188,10 @@ function makeWoodTexture(): THREE.CanvasTexture {
 
 function CameraRig({
   focusedBoardId,
+  perspectiveSlot,
 }: {
   focusedBoardId: BoardId | null;
+  perspectiveSlot: PlayerSlot;
 }) {
   const cameraRef = useRef<THREE.OrthographicCamera>(null);
   const { size } = useThree();
@@ -164,7 +201,7 @@ function CameraRig({
     if (!camera) return;
 
     const aspect = Math.max(0.1, size.width / Math.max(1, size.height));
-    const frame = resolveWarTableFrame(aspect, focusedBoardId);
+    const frame = resolveWarTableFrame(aspect, focusedBoardId, perspectiveSlot);
     const viewHeight = frame.viewWidth / aspect;
 
     camera.up.set(...frame.up);
@@ -177,7 +214,7 @@ function CameraRig({
     camera.far = 100;
     camera.lookAt(...frame.target);
     camera.updateProjectionMatrix();
-  }, [focusedBoardId, size.height, size.width]);
+  }, [focusedBoardId, perspectiveSlot, size.height, size.width]);
 
   return <DreiOrthographicCamera ref={cameraRef} makeDefault />;
 }
@@ -308,6 +345,7 @@ function BoardMesh({
   drag,
   interactive,
   focusedBoardId,
+  perspectiveSlot,
   onHover,
   onPointerUp,
   onPieceDragStart,
@@ -321,6 +359,7 @@ function BoardMesh({
   drag: DragIntent | null;
   interactive: boolean;
   focusedBoardId: BoardId | null;
+  perspectiveSlot: PlayerSlot;
   onHover: (cell: HoveredCell | null) => void;
   onPointerUp: () => void;
   onPieceDragStart: (
@@ -330,7 +369,7 @@ function BoardMesh({
     piece: PlacedTower,
   ) => void;
 }) {
-  const layout = boardLayoutForFocus(boardId, focusedBoardId);
+  const layout = boardLayoutForFocus(boardId, focusedBoardId, perspectiveSlot);
   const board = boards[boardId];
   const frozen = frozenBoards[BOARD_INDEX[boardId]];
   const highlightSet = useMemo(
@@ -342,7 +381,7 @@ function BoardMesh({
   return (
     <group
       position={layout.position}
-      rotation={[0, layout.rotationY, 0]}
+      rotation={[layout.rotationX, layout.rotationY, 0]}
       scale={[layout.scale, 1, layout.scale]}
     >
       <mesh receiveShadow position={[0, 0.02, 0]}>
@@ -354,8 +393,8 @@ function BoardMesh({
         />
       </mesh>
       <Text
-        position={[0, 0.16, -BOARD_RIM_SIZE / 2 - 0.18]}
-        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.16, layout.labelPositionZ]}
+        rotation={[-Math.PI / 2, 0, layout.labelRotationZ]}
         fontSize={0.16}
         color={frozen ? "#b8c4cc" : "#d9bb62"}
         anchorX="center"
@@ -427,12 +466,14 @@ function BoardMesh({
 
 function ReserveHand({
   slot,
+  perspectiveSlot,
   reserves,
   active,
   interactive,
   onReserveDragStart,
 }: {
   slot: PlayerSlot;
+  perspectiveSlot: PlayerSlot;
   reserves: TowerSpec[];
   active: boolean;
   interactive: boolean;
@@ -442,7 +483,7 @@ function ReserveHand({
     slot: PlayerSlot,
   ) => void;
 }) {
-  const base = PLAYER_TABLE_POSITIONS[slot];
+  const base = playerHandPosition(slot, perspectiveSlot);
   const accent = SLOT_ACCENTS[slot];
 
   return (
@@ -493,22 +534,24 @@ function ReserveHand({
 
 function CaptureRack({
   slot,
+  perspectiveSlot,
   score,
   captures,
   active,
 }: {
   slot: PlayerSlot;
+  perspectiveSlot: PlayerSlot;
   score: number;
   captures: PlacedTower[];
   active: boolean;
 }) {
-  const [x, y, z] = PLAYER_TABLE_POSITIONS[slot];
+  const [x, y, z] = captureRackPosition(slot, perspectiveSlot);
   const accent = SLOT_ACCENTS[slot];
 
   return (
-    <group position={[x, y, z + (slot === 1 ? -0.8 : 0.88)]}>
+    <group position={[x, y, z]}>
       <mesh receiveShadow>
-        <boxGeometry args={[1.56, 0.07, 0.5]} />
+        <boxGeometry args={[1.18, 0.07, 0.42]} />
         <meshStandardMaterial
           color={active ? "#241c10" : "#15120f"}
           emissive={active ? accent : "#000000"}
@@ -517,9 +560,9 @@ function CaptureRack({
         />
       </mesh>
       <Text
-        position={[-0.44, 0.12, 0]}
+        position={[-0.36, 0.12, 0]}
         rotation={[-Math.PI / 2, 0, 0]}
-        fontSize={0.18}
+        fontSize={0.16}
         color={accent}
         anchorX="center"
         anchorY="middle"
@@ -527,9 +570,9 @@ function CaptureRack({
         {score}
       </Text>
       <Text
-        position={[0.3, 0.12, 0]}
+        position={[0.22, 0.12, 0]}
         rotation={[-Math.PI / 2, 0, 0]}
-        fontSize={0.1}
+        fontSize={0.085}
         color="#d8cab0"
         anchorX="center"
         anchorY="middle"
@@ -537,7 +580,11 @@ function CaptureRack({
         {captures.length} captured
       </Text>
       {captures.slice(0, 4).map((piece, index) => (
-        <group key={`${towerKey(piece)}-${index}`} position={[0.68 - index * 0.12, 0.1 + index * 0.04, 0.14]} scale={0.28}>
+        <group
+          key={`${towerKey(piece)}-${index}`}
+          position={[0.48 - index * 0.1, 0.1 + index * 0.04, 0.12]}
+          scale={0.24}
+        >
           <TowerMesh piece={piece} slot={piece.ownerSlot} />
         </group>
       ))}
@@ -583,6 +630,11 @@ export function GameTableCanvas({
   const [drag, setDrag] = useState<DragIntent | null>(null);
   const [hoveredCell, setHoveredCell] = useState<HoveredCell | null>(null);
   const focusedBoardId = selected?.boardId ?? hoveredCell?.boardId ?? null;
+  const perspectiveSlot = controlSlot ?? 0;
+  const boardRenderOrder = useMemo(
+    () => boardRenderOrderForPerspective(perspectiveSlot),
+    [perspectiveSlot],
+  );
   const woodTexture = useMemo(() => makeWoodTexture(), []);
 
   const commitDrop = useCallback(
@@ -623,7 +675,10 @@ export function GameTableCanvas({
         dpr={[1, 2]}
         gl={{ antialias: true, preserveDrawingBuffer: true }}
       >
-        <CameraRig focusedBoardId={focusedBoardId} />
+        <CameraRig
+          focusedBoardId={focusedBoardId}
+          perspectiveSlot={perspectiveSlot}
+        />
         <color attach="background" args={["#b57942"]} />
         <hemisphereLight args={["#fff0d1", "#2b170e", 1.9]} />
         <directionalLight
@@ -657,7 +712,7 @@ export function GameTableCanvas({
               opacity={pending ? 0.42 : 0.24}
             />
           </mesh>
-          {BOARD_RENDER_ORDER.map((boardId) => (
+          {boardRenderOrder.map((boardId) => (
             <BoardMesh
               key={boardId}
               boardId={boardId}
@@ -669,6 +724,7 @@ export function GameTableCanvas({
               drag={drag}
               interactive={interactive}
               focusedBoardId={focusedBoardId}
+              perspectiveSlot={perspectiveSlot}
               onHover={setHoveredCell}
               onPointerUp={commitDrop}
               onPieceDragStart={(event, dragBoardId, position, piece) => {
@@ -688,6 +744,7 @@ export function GameTableCanvas({
           {controlSlot !== null && setupReserves.length > 0 && (
             <ReserveHand
               slot={controlSlot}
+              perspectiveSlot={perspectiveSlot}
               reserves={setupReserves}
               active={interactive}
               interactive={interactive}
@@ -702,6 +759,7 @@ export function GameTableCanvas({
             <CaptureRack
               key={slot}
               slot={slot}
+              perspectiveSlot={perspectiveSlot}
               score={scores[slot] ?? 0}
               captures={capturedBySlot[slot] ?? []}
               active={activeSlot === slot}
