@@ -1,3 +1,4 @@
+import { useId } from "react";
 import type { PlacedTower, PlayerSlot, TowerSpec } from "@/lib/game/types";
 
 const SLOT_STYLES: Record<
@@ -21,6 +22,11 @@ function strokeWidth(
 
 function heightLabel(height: TowerSpec["height"]): string {
   return height === 1 ? "small" : height === 2 ? "medium" : "large";
+}
+
+function streakColor(slot: PlayerSlot): string {
+  if (slot === 1) return "#3a3124";
+  return "#f0cf67";
 }
 
 function ShapeSilhouette({
@@ -79,6 +85,53 @@ function ShapeSilhouette({
   );
 }
 
+function HeightStreaks({
+  clipPathId,
+  color,
+  height,
+  size,
+}: {
+  clipPathId: string;
+  color: string;
+  height: TowerSpec["height"];
+  size: number;
+}) {
+  const streaks = [
+    { fromY: 0.84, toY: 0.61, opacity: 0.78 },
+    { fromY: 0.63, toY: 0.4, opacity: 0.52 },
+    { fromY: 0.42, toY: 0.2, opacity: 0.3 },
+  ].slice(0, height);
+  const strokeWidth = Math.max(1.5, size * 0.055);
+  const laneOffsets = [-0.16, 0.16];
+
+  return (
+    <g clipPath={`url(#${clipPathId})`} aria-hidden="true">
+      {streaks.flatMap((streak, streakIndex) =>
+        laneOffsets.map((offset, laneIndex) => {
+          const x = size * (0.5 + offset);
+          const fromY = size * streak.fromY;
+          const toY = size * streak.toY;
+          const lean = size * (offset < 0 ? -0.026 : 0.026);
+
+          return (
+            <path
+              key={`${streakIndex}-${laneIndex}`}
+              d={`M ${x} ${fromY} C ${x + lean} ${fromY - size * 0.06} ${
+                x + lean
+              } ${toY + size * 0.06} ${x + lean * 1.6} ${toY}`}
+              fill="none"
+              stroke={color}
+              strokeLinecap="round"
+              strokeWidth={strokeWidth}
+              opacity={streak.opacity}
+            />
+          );
+        }),
+      )}
+    </g>
+  );
+}
+
 type TowerPieceProps = {
   tower: TowerSpec | PlacedTower;
   slot?: PlayerSlot;
@@ -92,12 +145,17 @@ export function TowerPiece({
   size = "md",
   physical = false,
 }: TowerPieceProps) {
+  const clipPathSeed = useId().replace(/:/g, "");
+  const clipPathId = `${clipPathSeed}-tower-shape`;
   const ownerSlot =
     "ownerSlot" in tower ? (tower.ownerSlot as PlayerSlot) : slot ?? 0;
   const style = SLOT_STYLES[ownerSlot];
   const canvasSize = size === "sm" ? 36 : size === "lg" ? 64 : 52;
   const shapeStrokeWidth = strokeWidth(tower.height, size);
   const shadowY = canvasSize - 5;
+  const topInset = Math.max(6, canvasSize * 0.2);
+  const topSize = canvasSize - topInset * 2;
+  const showContrastTop = ownerSlot === 0;
 
   return (
     <svg
@@ -127,12 +185,38 @@ export function TowerPiece({
           />
         </g>
       )}
+      <clipPath id={clipPathId}>
+        <ShapeSilhouette
+          sides={tower.sides}
+          size={canvasSize}
+          fill="white"
+          stroke="none"
+          strokeWidth={shapeStrokeWidth}
+        />
+      </clipPath>
       <ShapeSilhouette
         sides={tower.sides}
         size={canvasSize}
         fill={style.fill}
         stroke={style.stroke}
         strokeWidth={shapeStrokeWidth}
+      />
+      {showContrastTop && topSize > 0 && (
+        <g transform={`translate(${topInset} ${topInset})`}>
+          <ShapeSilhouette
+            sides={tower.sides}
+            size={topSize}
+            fill="#f8f4e8"
+            stroke="#f8f4e8"
+            strokeWidth={Math.max(1, shapeStrokeWidth * 0.28)}
+          />
+        </g>
+      )}
+      <HeightStreaks
+        clipPathId={clipPathId}
+        color={streakColor(ownerSlot)}
+        height={tower.height}
+        size={canvasSize}
       />
     </svg>
   );

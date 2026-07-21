@@ -28,38 +28,112 @@ export type BoardRenderLayout = {
 };
 
 type BoardStation = "left" | "right" | "front";
+type PlayerTableStation = "near" | "left" | "far";
+type BoardLayoutBase = {
+  position: Vector3Tuple;
+  rotationX: number;
+  rotationY: number;
+  scale: number;
+};
+type BoardStationSpec = Omit<BoardLayoutBase, "position"> & { y: number };
 
-export const BASE_BOARD_LAYOUT: Record<
-  BoardId,
-  { position: Vector3Tuple; rotationX: number; rotationY: number; scale: number }
-> = {
-  board01: {
-    position: [-1.86, 0.22, -1.78],
+export const TABLE_LAYOUT_RULES = {
+  frontCenter: [0.02, 1.24],
+  sideToFrontGutter: 0.96,
+  sideInnerGutter: 0.86,
+  reserveHandGutter: 0.62,
+  captureRackGutter: 0.26,
+  cameraPaddingX: 0.58,
+  cameraPaddingZ: 0.86,
+  cameraDepthScale: 0.84,
+} as const;
+
+export const TABLE_ACCESSORY_SIZES = {
+  reserveHand: { width: 3.48, trayDepth: 1.08, footprintDepth: 1.34 },
+  captureRack: { width: 1.18, depth: 0.42 },
+} as const;
+
+const BOARD_STATION_SPECS: Record<BoardStation, BoardStationSpec> = {
+  left: {
+    y: 0.22,
     rotationX: 0.12,
     rotationY: 0.42,
     scale: 0.7,
   },
-  board12: {
-    position: [1.28, 0.24, -3.18],
+  right: {
+    y: 0.24,
     rotationX: 0.14,
     rotationY: -0.32,
     scale: 0.52,
   },
-  board02: {
-    position: [0.02, 0, 1.08],
+  front: {
+    y: 0,
     rotationX: 0,
     rotationY: -0.02,
     scale: 1.02,
   },
 };
 
-const STATION_LAYOUT: Record<
-  BoardStation,
-  { position: Vector3Tuple; rotationX: number; rotationY: number; scale: number }
-> = {
-  left: BASE_BOARD_LAYOUT.board01,
-  right: BASE_BOARD_LAYOUT.board12,
-  front: BASE_BOARD_LAYOUT.board02,
+function rimBoundsForStation(spec: BoardStationSpec) {
+  const half = BOARD_RIM_SIZE / 2;
+  const localCorners: Vector3Tuple[] = [
+    [-half, 0.1, -half],
+    [half, 0.1, -half],
+    [-half, 0.1, half],
+    [half, 0.1, half],
+  ];
+
+  return boundsFor(
+    localCorners.map((corner) =>
+      rotateY(
+        rotateX(scaleXZ(corner, spec.scale), spec.rotationX),
+        spec.rotationY,
+      ),
+    ),
+  );
+}
+
+function computeStationLayout(): Record<BoardStation, BoardLayoutBase> {
+  const front = BOARD_STATION_SPECS.front;
+  const left = BOARD_STATION_SPECS.left;
+  const right = BOARD_STATION_SPECS.right;
+  const frontBounds = rimBoundsForStation(front);
+  const leftBounds = rimBoundsForStation(left);
+  const rightBounds = rimBoundsForStation(right);
+  const [frontX, frontZ] = TABLE_LAYOUT_RULES.frontCenter;
+  const sideNearEdge =
+    frontZ + frontBounds.minZ - TABLE_LAYOUT_RULES.sideToFrontGutter;
+
+  return {
+    front: {
+      ...front,
+      position: [frontX, front.y, frontZ],
+    },
+    left: {
+      ...left,
+      position: [
+        frontX - TABLE_LAYOUT_RULES.sideInnerGutter / 2 - leftBounds.maxX,
+        left.y,
+        sideNearEdge - leftBounds.maxZ,
+      ],
+    },
+    right: {
+      ...right,
+      position: [
+        frontX + TABLE_LAYOUT_RULES.sideInnerGutter / 2 - rightBounds.minX,
+        right.y,
+        sideNearEdge - rightBounds.maxZ,
+      ],
+    },
+  };
+}
+
+const STATION_LAYOUT = computeStationLayout();
+
+export const BASE_BOARD_LAYOUT: Record<BoardId, BoardLayoutBase> = {
+  board01: STATION_LAYOUT.left,
+  board02: STATION_LAYOUT.front,
+  board12: STATION_LAYOUT.right,
 };
 
 function clockwiseNext(slot: PlayerSlot): PlayerSlot {
@@ -99,6 +173,15 @@ function stationForBoard(
   return "right";
 }
 
+function playerTableStationForSlot(
+  slot: PlayerSlot,
+  perspectiveSlot: PlayerSlot,
+): PlayerTableStation {
+  if (slot === perspectiveSlot) return "near";
+  if (slot === clockwiseNext(perspectiveSlot)) return "left";
+  return "far";
+}
+
 function facingSlotForBoard(
   boardId: BoardId,
   perspectiveSlot: PlayerSlot,
@@ -113,6 +196,22 @@ export function boardRenderOrderForPerspective(
 ): BoardId[] {
   const stations = boardsForPerspective(perspectiveSlot);
   return [stations.left, stations.right, stations.front];
+}
+
+function accessoryCorners(
+  center: Vector3Tuple,
+  width: number,
+  depth: number,
+): Vector3Tuple[] {
+  const halfWidth = width / 2;
+  const halfDepth = depth / 2;
+
+  return [
+    [center[0] - halfWidth, center[1], center[2] - halfDepth],
+    [center[0] + halfWidth, center[1], center[2] - halfDepth],
+    [center[0] - halfWidth, center[1], center[2] + halfDepth],
+    [center[0] + halfWidth, center[1], center[2] + halfDepth],
+  ];
 }
 
 function add(a: Vector3Tuple, b: Vector3Tuple): Vector3Tuple {
@@ -169,6 +268,79 @@ export function boardLayoutForFocus(
   };
 }
 
+function boardRimBounds(
+  boardId: BoardId,
+  focusedBoardId: BoardId | null,
+  perspectiveSlot: PlayerSlot,
+) {
+  const half = BOARD_RIM_SIZE / 2;
+  const corners: Vector3Tuple[] = [
+    [-half, 0.1, -half],
+    [half, 0.1, -half],
+    [-half, 0.1, half],
+    [half, 0.1, half],
+  ];
+
+  return boundsFor(
+    corners.map((corner) =>
+      transformPoint(corner, boardId, focusedBoardId, perspectiveSlot),
+    ),
+  );
+}
+
+export function playerHandPosition(
+  _slot: PlayerSlot,
+  perspectiveSlot: PlayerSlot,
+  focusedBoardId: BoardId | null = null,
+): Vector3Tuple {
+  const frontBoard = boardsForPerspective(perspectiveSlot).front;
+  const frontBounds = boardRimBounds(frontBoard, focusedBoardId, perspectiveSlot);
+
+  return [
+    (frontBounds.minX + frontBounds.maxX) / 2,
+    0.02,
+    frontBounds.maxZ +
+      TABLE_ACCESSORY_SIZES.reserveHand.footprintDepth / 2 +
+      TABLE_LAYOUT_RULES.reserveHandGutter,
+  ];
+}
+
+export function captureRackPosition(
+  slot: PlayerSlot,
+  perspectiveSlot: PlayerSlot,
+  focusedBoardId: BoardId | null = null,
+): Vector3Tuple {
+  const station = playerTableStationForSlot(slot, perspectiveSlot);
+  const [leftBoard, rightBoard, frontBoard] =
+    boardRenderOrderForPerspective(perspectiveSlot);
+  const rack = TABLE_ACCESSORY_SIZES.captureRack;
+
+  if (station === "near") {
+    const bounds = boardRimBounds(frontBoard, focusedBoardId, perspectiveSlot);
+    return [
+      bounds.maxX + rack.width / 2 + TABLE_LAYOUT_RULES.captureRackGutter,
+      0.05,
+      bounds.maxZ - rack.depth / 2 - 0.18,
+    ];
+  }
+
+  if (station === "left") {
+    const bounds = boardRimBounds(leftBoard, focusedBoardId, perspectiveSlot);
+    return [
+      (bounds.minX + bounds.maxX) / 2,
+      0.08,
+      bounds.maxZ + rack.depth / 2 + TABLE_LAYOUT_RULES.captureRackGutter,
+    ];
+  }
+
+  const bounds = boardRimBounds(rightBoard, focusedBoardId, perspectiveSlot);
+  return [
+    (bounds.minX + bounds.maxX) / 2,
+    0.1,
+    bounds.maxZ + rack.depth / 2 + TABLE_LAYOUT_RULES.captureRackGutter,
+  ];
+}
+
 function transformPoint(
   point: Vector3Tuple,
   boardId: BoardId,
@@ -183,6 +355,38 @@ function transformPoint(
     ),
     layout.position,
   );
+}
+
+export function tableAccessoryCorners(
+  perspectiveSlot: PlayerSlot = 0,
+  {
+    focusedBoardId = null,
+    includeReserveHand = false,
+  }: {
+    focusedBoardId?: BoardId | null;
+    includeReserveHand?: boolean;
+  } = {},
+): Vector3Tuple[] {
+  const rack = TABLE_ACCESSORY_SIZES.captureRack;
+  const captureCorners = ([0, 1, 2] as PlayerSlot[]).flatMap((slot) =>
+    accessoryCorners(
+      captureRackPosition(slot, perspectiveSlot, focusedBoardId),
+      rack.width,
+      rack.depth,
+    ),
+  );
+
+  if (!includeReserveHand) return captureCorners;
+
+  const hand = TABLE_ACCESSORY_SIZES.reserveHand;
+  return [
+    ...captureCorners,
+    ...accessoryCorners(
+      playerHandPosition(perspectiveSlot, perspectiveSlot, focusedBoardId),
+      hand.width,
+      hand.footprintDepth,
+    ),
+  ];
 }
 
 export function battlefieldRimCorners(
@@ -244,9 +448,20 @@ export function resolveWarTableFrame(
   aspect: number,
   focusedBoardId: BoardId | null = null,
   perspectiveSlot: PlayerSlot = 0,
+  {
+    includeReserveHand = false,
+  }: {
+    includeReserveHand?: boolean;
+  } = {},
 ): CameraFrame {
   const bounds = boundsFor(
-    battlefieldRimCorners(focusedBoardId, perspectiveSlot),
+    [
+      ...battlefieldRimCorners(focusedBoardId, perspectiveSlot),
+      ...tableAccessoryCorners(perspectiveSlot, {
+        focusedBoardId,
+        includeReserveHand,
+      }),
+    ],
   );
   const footprintWidth = bounds.maxX - bounds.minX;
   const footprintDepth = bounds.maxZ - bounds.minZ;
@@ -256,8 +471,10 @@ export function resolveWarTableFrame(
     (bounds.minZ + bounds.maxZ) / 2 + 0.18,
   ];
   const viewWidth = Math.max(
-    footprintWidth + 0.72,
-    (footprintDepth + 1.08) * aspect * 0.88,
+    footprintWidth + TABLE_LAYOUT_RULES.cameraPaddingX,
+    (footprintDepth + TABLE_LAYOUT_RULES.cameraPaddingZ) *
+      aspect *
+      TABLE_LAYOUT_RULES.cameraDepthScale,
   );
 
   return {

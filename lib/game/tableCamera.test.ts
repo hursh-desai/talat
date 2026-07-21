@@ -7,10 +7,15 @@ import {
   BASE_BOARD_LAYOUT,
   BOARD_RIM_SIZE,
   CELL_WORLD_SIZE,
+  TABLE_ACCESSORY_SIZES,
+  TABLE_LAYOUT_RULES,
   boardRenderOrderForPerspective,
   battlefieldRimCorners,
   boardLayoutForFocus,
+  captureRackPosition,
+  playerHandPosition,
   resolveWarTableFrame,
+  tableAccessoryCorners,
   type CameraFrame,
 } from "./tableCamera";
 
@@ -99,6 +104,50 @@ function worldCellCenter(
     .add(new THREE.Vector3(...layout.position));
 }
 
+function boardRimBounds(
+  boardId: BoardId,
+  perspectiveSlot: PlayerSlot,
+  focusedBoardId: BoardId | null = null,
+) {
+  const layout = boardLayoutForFocus(boardId, focusedBoardId, perspectiveSlot);
+  const half = BOARD_RIM_SIZE / 2;
+  const corners = [
+    new THREE.Vector3(-half * layout.scale, 0.1, -half * layout.scale),
+    new THREE.Vector3(half * layout.scale, 0.1, -half * layout.scale),
+    new THREE.Vector3(-half * layout.scale, 0.1, half * layout.scale),
+    new THREE.Vector3(half * layout.scale, 0.1, half * layout.scale),
+  ].map((corner) =>
+    corner
+      .applyAxisAngle(new THREE.Vector3(1, 0, 0), layout.rotationX)
+      .applyAxisAngle(new THREE.Vector3(0, 1, 0), layout.rotationY)
+      .add(new THREE.Vector3(...layout.position)),
+  );
+
+  return corners.reduce(
+    (bounds, corner) => ({
+      minX: Math.min(bounds.minX, corner.x),
+      maxX: Math.max(bounds.maxX, corner.x),
+      minZ: Math.min(bounds.minZ, corner.z),
+      maxZ: Math.max(bounds.maxZ, corner.z),
+    }),
+    {
+      minX: Number.POSITIVE_INFINITY,
+      maxX: Number.NEGATIVE_INFINITY,
+      minZ: Number.POSITIVE_INFINITY,
+      maxZ: Number.NEGATIVE_INFINITY,
+    },
+  );
+}
+
+function boxBounds(center: THREE.Vector3, width: number, depth: number) {
+  return {
+    minX: center.x - width / 2,
+    maxX: center.x + width / 2,
+    minZ: center.z - depth / 2,
+    maxZ: center.z + depth / 2,
+  };
+}
+
 describe("war table camera model", () => {
   it("keeps the black-perspective control board in front and the second black board to its left", () => {
     expect(BASE_BOARD_LAYOUT.board02.position[2]).toBeGreaterThan(
@@ -110,8 +159,8 @@ describe("war table camera model", () => {
     expect(BASE_BOARD_LAYOUT.board01.position[0]).toBeLessThan(
       BASE_BOARD_LAYOUT.board02.position[0],
     );
-    expect(BASE_BOARD_LAYOUT.board12.position[2]).toBeLessThan(
-      BASE_BOARD_LAYOUT.board01.position[2],
+    expect(BASE_BOARD_LAYOUT.board12.position[0]).toBeGreaterThan(
+      BASE_BOARD_LAYOUT.board02.position[0],
     );
     expect(BASE_BOARD_LAYOUT.board02.scale).toBeGreaterThan(
       BASE_BOARD_LAYOUT.board01.scale,
@@ -154,9 +203,16 @@ describe("war table camera model", () => {
       expect(left.position[0], `left board for ${slot}`).toBeLessThan(
         front.position[0],
       );
-      expect(right.position[2], `far board for ${slot}`).toBeLessThan(
-        left.position[2],
+      expect(right.position[0], `right board for ${slot}`).toBeGreaterThan(
+        front.position[0],
       );
+      expect(
+        Math.abs(
+          boardRimBounds(leftBoard, slot).maxZ -
+            boardRimBounds(rightBoard, slot).maxZ,
+        ),
+        `side-row edge alignment for ${slot}`,
+      ).toBeLessThanOrEqual(0.04);
       expect(right.scale, `far board scale for ${slot}`).toBeLessThan(
         left.scale,
       );
@@ -199,6 +255,138 @@ describe("war table camera model", () => {
     );
   });
 
+  it("derives board positions from clear spacing gutters", () => {
+    for (const slot of PLAYER_SLOTS) {
+      const [leftBoard, rightBoard, frontBoard] =
+        boardRenderOrderForPerspective(slot);
+      const left = boardRimBounds(leftBoard, slot);
+      const right = boardRimBounds(rightBoard, slot);
+      const front = boardRimBounds(frontBoard, slot);
+
+      expect(
+        front.minZ - left.maxZ,
+        `left/front gutter for player ${slot}`,
+      ).toBeGreaterThanOrEqual(TABLE_LAYOUT_RULES.sideToFrontGutter - 0.001);
+      expect(
+        front.minZ - right.maxZ,
+        `right/front gutter for player ${slot}`,
+      ).toBeGreaterThanOrEqual(TABLE_LAYOUT_RULES.sideToFrontGutter - 0.001);
+      expect(
+        right.minX - left.maxX,
+        `side-board inner gutter for player ${slot}`,
+      ).toBeGreaterThanOrEqual(TABLE_LAYOUT_RULES.sideInnerGutter - 0.001);
+    }
+  });
+
+  it("keeps board gutters visible while a board is focused", () => {
+    for (const slot of PLAYER_SLOTS) {
+      const [leftBoard, rightBoard, frontBoard] =
+        boardRenderOrderForPerspective(slot);
+
+      for (const focusedBoardId of BOARD_IDS) {
+        const left = boardRimBounds(leftBoard, slot, focusedBoardId);
+        const right = boardRimBounds(rightBoard, slot, focusedBoardId);
+        const front = boardRimBounds(frontBoard, slot, focusedBoardId);
+
+        expect(
+          front.minZ - left.maxZ,
+          `left/front focused gutter for player ${slot}, focus ${focusedBoardId}`,
+        ).toBeGreaterThanOrEqual(0.4);
+        expect(
+          front.minZ - right.maxZ,
+          `right/front focused gutter for player ${slot}, focus ${focusedBoardId}`,
+        ).toBeGreaterThanOrEqual(0.4);
+        expect(
+          right.minX - left.maxX,
+          `side-board focused gutter for player ${slot}, focus ${focusedBoardId}`,
+        ).toBeGreaterThanOrEqual(0.6);
+      }
+    }
+  });
+
+  it("keeps the setup hand clear of the front board", () => {
+    for (const slot of PLAYER_SLOTS) {
+      const [, , frontBoard] = boardRenderOrderForPerspective(slot);
+      const front = boardRimBounds(frontBoard, slot);
+      const hand = boxBounds(
+        new THREE.Vector3(...playerHandPosition(slot, slot)),
+        TABLE_ACCESSORY_SIZES.reserveHand.width,
+        TABLE_ACCESSORY_SIZES.reserveHand.footprintDepth,
+      );
+
+      expect(
+        hand.minZ - front.maxZ,
+        `setup hand gutter for player ${slot}`,
+      ).toBeGreaterThanOrEqual(TABLE_LAYOUT_RULES.reserveHandGutter - 0.001);
+    }
+  });
+
+  it("anchors score racks near their related board edges without touching boards", () => {
+    for (const perspectiveSlot of PLAYER_SLOTS) {
+      const [leftBoard, rightBoard, frontBoard] =
+        boardRenderOrderForPerspective(perspectiveSlot);
+      const nearSlot = perspectiveSlot;
+      const leftSlot = ((perspectiveSlot + 1) % 3) as PlayerSlot;
+      const farSlot = ((perspectiveSlot + 2) % 3) as PlayerSlot;
+      const left = boardRimBounds(leftBoard, perspectiveSlot);
+      const right = boardRimBounds(rightBoard, perspectiveSlot);
+      const front = boardRimBounds(frontBoard, perspectiveSlot);
+      const rackSize = TABLE_ACCESSORY_SIZES.captureRack;
+      const nearRack = boxBounds(
+        new THREE.Vector3(
+          ...captureRackPosition(nearSlot, perspectiveSlot),
+        ),
+        rackSize.width,
+        rackSize.depth,
+      );
+      const leftRack = boxBounds(
+        new THREE.Vector3(...captureRackPosition(leftSlot, perspectiveSlot)),
+        rackSize.width,
+        rackSize.depth,
+      );
+      const farRack = boxBounds(
+        new THREE.Vector3(...captureRackPosition(farSlot, perspectiveSlot)),
+        rackSize.width,
+        rackSize.depth,
+      );
+
+      expect(
+        nearRack.minX - front.maxX,
+        `near rack/front board gutter from perspective ${perspectiveSlot}`,
+      ).toBeGreaterThanOrEqual(TABLE_LAYOUT_RULES.captureRackGutter - 0.001);
+      expect(
+        leftRack.minZ - left.maxZ,
+        `left rack/left board gutter from perspective ${perspectiveSlot}`,
+      ).toBeGreaterThanOrEqual(TABLE_LAYOUT_RULES.captureRackGutter - 0.001);
+      expect(
+        farRack.minZ - right.maxZ,
+        `far rack/right board gutter from perspective ${perspectiveSlot}`,
+      ).toBeGreaterThanOrEqual(TABLE_LAYOUT_RULES.captureRackGutter - 0.001);
+      expect(
+        front.minZ - leftRack.maxZ,
+        `left rack/front board gutter from perspective ${perspectiveSlot}`,
+      ).toBeGreaterThanOrEqual(TABLE_LAYOUT_RULES.captureRackGutter - 0.001);
+      expect(
+        front.minZ - farRack.maxZ,
+        `far rack/front board gutter from perspective ${perspectiveSlot}`,
+      ).toBeGreaterThanOrEqual(TABLE_LAYOUT_RULES.captureRackGutter - 0.001);
+      expect(
+        Math.abs(
+          (leftRack.minX + leftRack.maxX) / 2 -
+            (left.minX + left.maxX) / 2,
+        ),
+        `left rack centered under left board from perspective ${perspectiveSlot}`,
+      ).toBeLessThanOrEqual(0.001);
+      expect(
+        Math.abs(
+          (farRack.minX + farRack.maxX) / 2 -
+            (right.minX + right.maxX) / 2,
+        ),
+        `far rack centered under right board from perspective ${perspectiveSlot}`,
+      ).toBeLessThanOrEqual(0.001);
+    }
+  });
+
   it("keeps tilted board rims above the tabletop", () => {
     expect(minBoardRimBottomY("board01")).toBeGreaterThan(TABLE_SURFACE_Y);
     expect(minBoardRimBottomY("board12")).toBeGreaterThan(TABLE_SURFACE_Y);
@@ -225,6 +413,31 @@ describe("war table camera model", () => {
         expect(
           maxAbs,
           `${viewportName} focus=${focusedBoardId ?? "none"}`,
+        ).toBeLessThanOrEqual(0.98);
+      }
+    }
+  });
+
+  it("keeps rendered boards and setup accessories in frame together", () => {
+    for (const [viewportName, aspect] of Object.entries(VIEWPORTS)) {
+      for (const slot of PLAYER_SLOTS) {
+        const camera = makeCamera(
+          resolveWarTableFrame(aspect, null, slot, {
+            includeReserveHand: true,
+          }),
+          aspect,
+        );
+        const corners = [
+          ...battlefieldRimCorners(null, slot),
+          ...tableAccessoryCorners(slot, { includeReserveHand: true }),
+        ].map((point) => new THREE.Vector3(...point).project(camera));
+        const maxAbs = Math.max(
+          ...corners.flatMap(({ x, y }) => [Math.abs(x), Math.abs(y)]),
+        );
+
+        expect(
+          maxAbs,
+          `${viewportName} setup scene for player ${slot}`,
         ).toBeLessThanOrEqual(0.98);
       }
     }

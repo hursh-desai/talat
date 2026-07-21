@@ -19,10 +19,12 @@ import {
   BOARD_INDEX,
   BOARD_RIM_SIZE,
   CELL_WORLD_SIZE,
+  TABLE_ACCESSORY_SIZES,
   boardRenderOrderForPerspective,
   boardLayoutForFocus,
+  captureRackPosition,
+  playerHandPosition,
   resolveWarTableFrame,
-  type Vector3Tuple,
 } from "@/lib/game/tableCamera";
 import { playersOnBoard, towerKey } from "@/lib/game/types";
 import { startingRow } from "@/lib/game/geometry";
@@ -84,24 +86,25 @@ const SLOT_ACCENTS: Record<PlayerSlot, string> = {
   2: "#b8c4cc",
 };
 
-type PlayerTableStation = "near" | "left" | "far";
-
-const PLAYER_HAND_POSITIONS: Record<PlayerTableStation, Vector3Tuple> = {
-  near: [0.02, 0.02, 3.42],
-  left: [-2.78, 0.06, -0.52],
-  far: [2.0, 0.08, -2.04],
-};
-
-const CAPTURE_RACK_POSITIONS: Record<PlayerTableStation, Vector3Tuple> = {
-  near: [2.5, 0.05, 2.34],
-  left: [-2.92, 0.08, 0.06],
-  far: [2.28, 0.1, -1.52],
-};
+const HEIGHT_STREAK_SEGMENTS = [
+  { from: 0.12, to: 0.38, opacity: 0.78 },
+  { from: 0.4, to: 0.66, opacity: 0.52 },
+  { from: 0.68, to: 0.9, opacity: 0.3 },
+] as const;
 
 const BOARD_LABELS: Record<BoardId, string> = {
   board01: "Black / White",
   board02: "Black / Grey",
   board12: "White / Grey",
+};
+
+const RESERVE_SHAPE_ORDER: TowerSpec["sides"][] = [3, 4, 6];
+
+type ReserveHandPiece = {
+  tower: TowerSpec;
+  sourceIndex: number;
+  position: [number, number, number];
+  scale: number;
 };
 
 function posKey(position: Position): string {
@@ -112,31 +115,37 @@ function samePosition(a: Position, b: Position): boolean {
   return a.row === b.row && a.col === b.col;
 }
 
-function clockwiseNext(slot: PlayerSlot): PlayerSlot {
-  return ((slot + 1) % 3) as PlayerSlot;
+function heightMarkColor(slot: PlayerSlot): string {
+  if (slot === 1) return "#5f5649";
+  if (slot === 2) return "#f2eee3";
+  return "#f5d875";
 }
 
-function tableStationForSlot(
-  slot: PlayerSlot,
-  perspectiveSlot: PlayerSlot,
-): PlayerTableStation {
-  if (slot === perspectiveSlot) return "near";
-  if (slot === clockwiseNext(perspectiveSlot)) return "left";
-  return "far";
-}
+function reserveHandPieces(reserves: TowerSpec[]): ReserveHandPiece[] {
+  return reserves
+    .map((tower, sourceIndex) => ({ tower, sourceIndex }))
+    .sort((a, b) => {
+      const sideDelta =
+        RESERVE_SHAPE_ORDER.indexOf(a.tower.sides) -
+        RESERVE_SHAPE_ORDER.indexOf(b.tower.sides);
+      return sideDelta || a.tower.height - b.tower.height;
+    })
+    .map(({ tower, sourceIndex }) => {
+      const groupIndex = RESERVE_SHAPE_ORDER.indexOf(tower.sides);
+      const heightIndex = tower.height - 1;
+      const groupCenterX = -1.08 + groupIndex * 1.08;
 
-function playerHandPosition(
-  slot: PlayerSlot,
-  perspectiveSlot: PlayerSlot,
-): Vector3Tuple {
-  return PLAYER_HAND_POSITIONS[tableStationForSlot(slot, perspectiveSlot)];
-}
-
-function captureRackPosition(
-  slot: PlayerSlot,
-  perspectiveSlot: PlayerSlot,
-): Vector3Tuple {
-  return CAPTURE_RACK_POSITIONS[tableStationForSlot(slot, perspectiveSlot)];
+      return {
+        tower,
+        sourceIndex,
+        position: [
+          groupCenterX + (heightIndex - 1) * 0.21,
+          0.08 + heightIndex * 0.032,
+          -0.31 + heightIndex * 0.37,
+        ],
+        scale: 0.64 + heightIndex * 0.035,
+      };
+    });
 }
 
 function cellPosition(position: Position): [number, number, number] {
@@ -189,9 +198,11 @@ function makeWoodTexture(): THREE.CanvasTexture {
 function CameraRig({
   focusedBoardId,
   perspectiveSlot,
+  includeReserveHand,
 }: {
   focusedBoardId: BoardId | null;
   perspectiveSlot: PlayerSlot;
+  includeReserveHand: boolean;
 }) {
   const cameraRef = useRef<THREE.OrthographicCamera>(null);
   const { size } = useThree();
@@ -201,7 +212,9 @@ function CameraRig({
     if (!camera) return;
 
     const aspect = Math.max(0.1, size.width / Math.max(1, size.height));
-    const frame = resolveWarTableFrame(aspect, focusedBoardId, perspectiveSlot);
+    const frame = resolveWarTableFrame(aspect, focusedBoardId, perspectiveSlot, {
+      includeReserveHand,
+    });
     const viewHeight = frame.viewWidth / aspect;
 
     camera.up.set(...frame.up);
@@ -214,7 +227,13 @@ function CameraRig({
     camera.far = 100;
     camera.lookAt(...frame.target);
     camera.updateProjectionMatrix();
-  }, [focusedBoardId, perspectiveSlot, size.height, size.width]);
+  }, [
+    focusedBoardId,
+    includeReserveHand,
+    perspectiveSlot,
+    size.height,
+    size.width,
+  ]);
 
   return <DreiOrthographicCamera ref={cameraRef} makeDefault />;
 }
@@ -233,6 +252,14 @@ function TowerMesh({
   const height = 0.24 + piece.height * 0.2;
   const radius = piece.sides === 3 ? 0.23 : piece.sides === 4 ? 0.22 : 0.24;
   const accent = SLOT_ACCENTS[slot];
+  const heightMark = heightMarkColor(slot);
+  const topColor = slot === 0 ? "#f8f4e8" : "#171310";
+  const faceDistance = radius * Math.cos(Math.PI / piece.sides) + 0.006;
+  const streakWidth = Math.max(0.018, radius * 0.1);
+  const faceAngles = Array.from(
+    { length: piece.sides },
+    (_, faceIndex) => (faceIndex + 0.5) * (Math.PI * 2 / piece.sides),
+  );
 
   return (
     <group onPointerDown={onPointerDown}>
@@ -248,10 +275,38 @@ function TowerMesh({
           metalness={0.02}
         />
       </mesh>
+      {HEIGHT_STREAK_SEGMENTS.slice(0, piece.height).flatMap(
+        (segment, segmentIndex) =>
+          faceAngles.map((angle, faceIndex) => {
+            const segmentHeight = height * (segment.to - segment.from);
+            const segmentY = height * ((segment.from + segment.to) / 2);
+
+            return (
+              <mesh
+                key={`${segmentIndex}-${faceIndex}`}
+                position={[
+                  Math.sin(angle) * faceDistance,
+                  segmentY,
+                  Math.cos(angle) * faceDistance,
+                ]}
+                rotation={[0, angle, 0]}
+              >
+                <planeGeometry args={[streakWidth, segmentHeight]} />
+                <meshBasicMaterial
+                  color={heightMark}
+                  transparent
+                  opacity={ghost ? segment.opacity * 0.5 : segment.opacity}
+                  depthWrite={false}
+                  side={THREE.DoubleSide}
+                />
+              </mesh>
+            );
+          }),
+      )}
       <mesh position={[0, height + 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <circleGeometry args={[radius * 0.62, piece.sides]} />
         <meshStandardMaterial
-          color="#171310"
+          color={topColor}
           transparent={ghost}
           opacity={ghost ? 0.5 : 1}
           roughness={0.8}
@@ -485,11 +540,18 @@ function ReserveHand({
 }) {
   const base = playerHandPosition(slot, perspectiveSlot);
   const accent = SLOT_ACCENTS[slot];
+  const handPieces = useMemo(() => reserveHandPieces(reserves), [reserves]);
 
   return (
     <group position={base}>
       <mesh receiveShadow>
-        <boxGeometry args={[2.7, 0.08, 0.72]} />
+        <boxGeometry
+          args={[
+            TABLE_ACCESSORY_SIZES.reserveHand.width,
+            0.08,
+            TABLE_ACCESSORY_SIZES.reserveHand.trayDepth,
+          ]}
+        />
         <meshStandardMaterial
           color={active ? "#2b2111" : "#18120d"}
           emissive={active ? accent : "#000000"}
@@ -498,7 +560,7 @@ function ReserveHand({
         />
       </mesh>
       <Text
-        position={[0, 0.13, -0.46]}
+        position={[0, 0.13, -0.66]}
         rotation={[-Math.PI / 2, 0, 0]}
         fontSize={0.13}
         color={active ? accent : "#9b8c76"}
@@ -507,27 +569,32 @@ function ReserveHand({
       >
         {active ? "active hand" : "hand"}
       </Text>
-      {reserves.map((tower, index) => {
-        const x = -1.04 + (index % 5) * 0.52;
-        const z = index < 5 ? -0.1 : 0.25;
-        return (
-          <group
-            key={`${towerKey(tower)}-${index}`}
-            position={[x, 0.08, z]}
-            scale={0.7}
+      {[-0.54, 0.54].map((x) => (
+        <mesh key={x} position={[x, 0.052, 0.05]}>
+          <boxGeometry args={[0.025, 0.018, 0.82]} />
+          <meshBasicMaterial color="#d9bb62" transparent opacity={0.26} />
+        </mesh>
+      ))}
+      {handPieces.map(({ tower, sourceIndex, position, scale }) => (
+        <group
+          key={`${towerKey(tower)}-${sourceIndex}`}
+          position={position}
+          scale={scale}
+        >
+          <mesh
+            position={[0, 0.04, 0]}
+            onPointerDown={
+              interactive
+                ? (event) => onReserveDragStart(event, tower, slot)
+                : undefined
+            }
           >
-            <TowerMesh
-              piece={tower}
-              slot={slot}
-              onPointerDown={
-                interactive
-                  ? (event) => onReserveDragStart(event, tower, slot)
-                  : undefined
-              }
-            />
-          </group>
-        );
-      })}
+            <cylinderGeometry args={[0.34, 0.34, 0.08, tower.sides]} />
+            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+          </mesh>
+          <TowerMesh piece={tower} slot={slot} />
+        </group>
+      ))}
     </group>
   );
 }
@@ -551,7 +618,13 @@ function CaptureRack({
   return (
     <group position={[x, y, z]}>
       <mesh receiveShadow>
-        <boxGeometry args={[1.18, 0.07, 0.42]} />
+        <boxGeometry
+          args={[
+            TABLE_ACCESSORY_SIZES.captureRack.width,
+            0.07,
+            TABLE_ACCESSORY_SIZES.captureRack.depth,
+          ]}
+        />
         <meshStandardMaterial
           color={active ? "#241c10" : "#15120f"}
           emissive={active ? accent : "#000000"}
@@ -629,8 +702,10 @@ export function GameTableCanvas({
 }: GameTableCanvasProps) {
   const [drag, setDrag] = useState<DragIntent | null>(null);
   const [hoveredCell, setHoveredCell] = useState<HoveredCell | null>(null);
+  const committedDropRef = useRef(false);
   const focusedBoardId = selected?.boardId ?? hoveredCell?.boardId ?? null;
   const perspectiveSlot = controlSlot ?? 0;
+  const includeReserveHand = controlSlot !== null && setupReserves.length > 0;
   const boardRenderOrder = useMemo(
     () => boardRenderOrderForPerspective(perspectiveSlot),
     [perspectiveSlot],
@@ -639,12 +714,15 @@ export function GameTableCanvas({
 
   const commitDrop = useCallback(
     (cell = hoveredCell) => {
+      if (committedDropRef.current) return;
+
       if (!drag || !cell) {
         setDrag(null);
         setHoveredCell(null);
         return;
       }
 
+      committedDropRef.current = true;
       if (drag.kind === "reserve") {
         onReserveDrop?.(drag.tower, cell.boardId, cell.position);
       } else {
@@ -678,6 +756,7 @@ export function GameTableCanvas({
         <CameraRig
           focusedBoardId={focusedBoardId}
           perspectiveSlot={perspectiveSlot}
+          includeReserveHand={includeReserveHand}
         />
         <color attach="background" args={["#b57942"]} />
         <hemisphereLight args={["#fff0d1", "#2b170e", 1.9]} />
@@ -731,6 +810,7 @@ export function GameTableCanvas({
                 event.stopPropagation();
                 if (!interactive) return;
                 startCapture(event);
+                committedDropRef.current = false;
                 onPieceSelect?.(dragBoardId, position, piece);
                 setDrag({
                   kind: "piece",
@@ -741,9 +821,9 @@ export function GameTableCanvas({
               }}
             />
           ))}
-          {controlSlot !== null && setupReserves.length > 0 && (
+          {includeReserveHand && (
             <ReserveHand
-              slot={controlSlot}
+              slot={controlSlot ?? perspectiveSlot}
               perspectiveSlot={perspectiveSlot}
               reserves={setupReserves}
               active={interactive}
@@ -751,6 +831,7 @@ export function GameTableCanvas({
               onReserveDragStart={(event, tower, slot) => {
                 event.stopPropagation();
                 startCapture(event);
+                committedDropRef.current = false;
                 setDrag({ kind: "reserve", tower, slot });
               }}
             />
