@@ -16,6 +16,8 @@ import {
   playerHandPosition,
   resolveWarTableFrame,
   tableAccessoryCorners,
+  tableLayoutModeForAspect,
+  type TableLayoutMode,
   type CameraFrame,
 } from "./tableCamera";
 
@@ -57,11 +59,12 @@ function projectedCorners(
   aspect: number,
   focusedBoardId: BoardId | null = null,
 ): THREE.Vector3[] {
+  const layoutMode = tableLayoutModeForAspect(aspect);
   const camera = makeCamera(
     resolveWarTableFrame(aspect, focusedBoardId),
     aspect,
   );
-  return battlefieldRimCorners(focusedBoardId).map((point) =>
+  return battlefieldRimCorners(focusedBoardId, 0, layoutMode).map((point) =>
     new THREE.Vector3(...point).project(camera),
   );
 }
@@ -108,8 +111,14 @@ function boardRimBounds(
   boardId: BoardId,
   perspectiveSlot: PlayerSlot,
   focusedBoardId: BoardId | null = null,
+  layoutMode: TableLayoutMode = "default",
 ) {
-  const layout = boardLayoutForFocus(boardId, focusedBoardId, perspectiveSlot);
+  const layout = boardLayoutForFocus(
+    boardId,
+    focusedBoardId,
+    perspectiveSlot,
+    layoutMode,
+  );
   const half = BOARD_RIM_SIZE / 2;
   const corners = [
     new THREE.Vector3(-half * layout.scale, 0.1, -half * layout.scale),
@@ -278,6 +287,49 @@ describe("war table camera model", () => {
     }
   });
 
+  it("uses taller table spacing on narrow mobile viewports", () => {
+    const mobileLayoutMode = tableLayoutModeForAspect(VIEWPORTS.tallMobile);
+
+    expect(mobileLayoutMode).toBe("mobileTall");
+    expect(tableLayoutModeForAspect(VIEWPORTS.square)).toBe("default");
+
+    for (const slot of PLAYER_SLOTS) {
+      const [leftBoard, rightBoard, frontBoard] =
+        boardRenderOrderForPerspective(slot);
+      const defaultLeft = boardRimBounds(leftBoard, slot);
+      const defaultRight = boardRimBounds(rightBoard, slot);
+      const defaultFront = boardRimBounds(frontBoard, slot);
+      const mobileLeft = boardRimBounds(
+        leftBoard,
+        slot,
+        null,
+        mobileLayoutMode,
+      );
+      const mobileRight = boardRimBounds(
+        rightBoard,
+        slot,
+        null,
+        mobileLayoutMode,
+      );
+      const mobileFront = boardRimBounds(
+        frontBoard,
+        slot,
+        null,
+        mobileLayoutMode,
+      );
+
+      expect(mobileRight.minX - mobileLeft.maxX).toBeLessThan(
+        defaultRight.minX - defaultLeft.maxX,
+      );
+      expect(mobileFront.minZ - mobileLeft.maxZ).toBeGreaterThan(
+        defaultFront.minZ - defaultLeft.maxZ,
+      );
+      expect(mobileFront.minZ - mobileRight.maxZ).toBeGreaterThan(
+        defaultFront.minZ - defaultRight.maxZ,
+      );
+    }
+  });
+
   it("keeps board gutters visible while a board is focused", () => {
     for (const slot of PLAYER_SLOTS) {
       const [leftBoard, rightBoard, frontBoard] =
@@ -428,8 +480,15 @@ describe("war table camera model", () => {
           aspect,
         );
         const corners = [
-          ...battlefieldRimCorners(null, slot),
-          ...tableAccessoryCorners(slot, { includeReserveHand: true }),
+          ...battlefieldRimCorners(
+            null,
+            slot,
+            tableLayoutModeForAspect(aspect),
+          ),
+          ...tableAccessoryCorners(slot, {
+            includeReserveHand: true,
+            layoutMode: tableLayoutModeForAspect(aspect),
+          }),
         ].map((point) => new THREE.Vector3(...point).project(camera));
         const maxAbs = Math.max(
           ...corners.flatMap(({ x, y }) => [Math.abs(x), Math.abs(y)]),

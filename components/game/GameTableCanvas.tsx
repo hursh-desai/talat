@@ -31,6 +31,8 @@ import {
   captureRackPosition,
   playerHandPosition,
   resolveWarTableFrame,
+  tableLayoutModeForAspect,
+  type TableLayoutMode,
 } from "@/lib/game/tableCamera";
 import { playersOnBoard, towerKey } from "@/lib/game/types";
 import { startingRow } from "@/lib/game/geometry";
@@ -192,6 +194,15 @@ function cellPosition(position: Position): [number, number, number] {
     0.12,
     (position.row - 2) * CELL_WORLD_SIZE,
   ];
+}
+
+function tableLayoutModeFromSize(size: {
+  width: number;
+  height: number;
+}): TableLayoutMode {
+  return tableLayoutModeForAspect(
+    Math.max(0.1, size.width / Math.max(1, size.height)),
+  );
 }
 
 function makeWoodTexture(): THREE.CanvasTexture {
@@ -541,7 +552,14 @@ function BoardMesh({
     piece: PlacedTower,
   ) => void;
 }) {
-  const layout = boardLayoutForFocus(boardId, focusedBoardId, perspectiveSlot);
+  const { size } = useThree();
+  const layoutMode = tableLayoutModeFromSize(size);
+  const layout = boardLayoutForFocus(
+    boardId,
+    focusedBoardId,
+    perspectiveSlot,
+    layoutMode,
+  );
   const board = boards[boardId];
   const frozen = frozenBoards[BOARD_INDEX[boardId]];
   const highlightSet = useMemo(
@@ -696,7 +714,9 @@ function ReserveHand({
     slot: PlayerSlot,
   ) => void;
 }) {
-  const base = playerHandPosition(slot, perspectiveSlot);
+  const { size } = useThree();
+  const layoutMode = tableLayoutModeFromSize(size);
+  const base = playerHandPosition(slot, perspectiveSlot, null, layoutMode);
   const accent = SLOT_ACCENTS[slot];
   const handPieces = useMemo(() => reserveHandPieces(reserves), [reserves]);
 
@@ -796,7 +816,14 @@ function CaptureRack({
   captures: PlacedTower[];
   active: boolean;
 }) {
-  const [x, y, z] = captureRackPosition(slot, perspectiveSlot);
+  const { size } = useThree();
+  const layoutMode = tableLayoutModeFromSize(size);
+  const [x, y, z] = captureRackPosition(
+    slot,
+    perspectiveSlot,
+    null,
+    layoutMode,
+  );
   const accent = SLOT_ACCENTS[slot];
 
   return (
@@ -984,6 +1011,12 @@ export function GameTableCanvas({
     [commitDrop],
   );
 
+  const cancelPointerDrag = useCallback(() => {
+    activePointerRef.current = null;
+    setDrag(null);
+    setHoveredCell(null);
+  }, []);
+
   const startCapture = useCallback((event: ThreeEvent<PointerEvent>) => {
     const target = event.target as Element;
     if ("setPointerCapture" in target) {
@@ -1002,6 +1035,8 @@ export function GameTableCanvas({
             : interactive
               ? "default"
               : "auto",
+        touchAction: "none",
+        userSelect: "none",
       }}
     >
       <p className="sr-only" aria-live="polite">
@@ -1039,6 +1074,7 @@ export function GameTableCanvas({
             const cell = readCellFromEvent(event);
             endPointerDrag(event, cell);
           }}
+          onPointerCancel={cancelPointerDrag}
         >
           <mesh receiveShadow position={[0, -0.12, 0]}>
             <boxGeometry args={[160, 0.16, 160]} />
