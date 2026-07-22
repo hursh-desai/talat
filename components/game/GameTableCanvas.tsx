@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
 import {
   OrthographicCamera as DreiOrthographicCamera,
@@ -43,6 +49,13 @@ type HoveredCell = {
   position: Position;
 };
 
+type ActivePointer = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  moved: boolean;
+};
+
 type GameTableCanvasProps = {
   boards: Boards;
   frozenBoards: boolean[];
@@ -54,13 +67,16 @@ type GameTableCanvasProps = {
   capturedBySlot?: PlacedTower[][];
   highlightByBoard?: Partial<Record<BoardId, Position[]>>;
   selected?: { boardId: BoardId; position: Position } | null;
+  selectedReserveTower?: TowerSpec | null;
   pending?: boolean;
   statusText?: string;
+  boardPiecesInteractive?: boolean;
   onReserveDrop?: (
     tower: TowerSpec,
     boardId: BoardId,
     position: Position,
   ) => void;
+  onReserveSelect?: (tower: TowerSpec) => void;
   onPieceDrop?: (
     boardId: BoardId,
     from: Position,
@@ -71,6 +87,11 @@ type GameTableCanvasProps = {
     boardId: BoardId,
     position: Position,
     piece: PlacedTower,
+  ) => void;
+  onCellTap?: (
+    boardId: BoardId,
+    position: Position,
+    piece: PlacedTower | null,
   ) => void;
 };
 
@@ -99,6 +120,7 @@ const BOARD_LABELS: Record<BoardId, string> = {
 };
 
 const RESERVE_SHAPE_ORDER: TowerSpec["sides"][] = [3, 4, 6];
+const TAP_MOVE_THRESHOLD = 6;
 
 type ReserveHandPiece = {
   tower: TowerSpec;
@@ -113,6 +135,22 @@ function posKey(position: Position): string {
 
 function samePosition(a: Position, b: Position): boolean {
   return a.row === b.row && a.col === b.col;
+}
+
+function sameTower(a: TowerSpec, b: TowerSpec): boolean {
+  return a.height === b.height && a.sides === b.sides;
+}
+
+function boardPieceKey(boardId: BoardId, position: Position): string {
+  return `board:${boardId}:${position.row}:${position.col}`;
+}
+
+function reservePieceKey(
+  slot: PlayerSlot,
+  tower: TowerSpec,
+  sourceIndex: number,
+): string {
+  return `reserve:${slot}:${towerKey(tower)}:${sourceIndex}`;
 }
 
 function heightMarkColor(slot: PlayerSlot): string {
@@ -242,18 +280,27 @@ function TowerMesh({
   piece,
   slot,
   ghost = false,
+  hovered = false,
+  selected = false,
   onPointerDown,
+  onPointerOver,
+  onPointerOut,
 }: {
   piece: TowerSpec | PlacedTower;
   slot: PlayerSlot;
   ghost?: boolean;
+  hovered?: boolean;
+  selected?: boolean;
   onPointerDown?: (event: ThreeEvent<PointerEvent>) => void;
+  onPointerOver?: (event: ThreeEvent<PointerEvent>) => void;
+  onPointerOut?: (event: ThreeEvent<PointerEvent>) => void;
 }) {
   const height = 0.24 + piece.height * 0.2;
   const radius = piece.sides === 3 ? 0.23 : piece.sides === 4 ? 0.22 : 0.24;
   const accent = SLOT_ACCENTS[slot];
   const heightMark = heightMarkColor(slot);
   const topColor = slot === 0 ? "#f8f4e8" : "#171310";
+  const interactiveAffordance = !ghost && (hovered || selected);
   const faceDistance = radius * Math.cos(Math.PI / piece.sides) + 0.006;
   const streakWidth = Math.max(0.018, radius * 0.1);
   const faceAngles = Array.from(
@@ -262,7 +309,24 @@ function TowerMesh({
   );
 
   return (
-    <group onPointerDown={onPointerDown}>
+    <group
+      position={[0, interactiveAffordance ? 0.055 : 0, 0]}
+      scale={hovered && !selected && !ghost ? 1.07 : 1}
+      onPointerDown={onPointerDown}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+    >
+      {interactiveAffordance && (
+        <mesh position={[0, 0.018, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[radius * 1.22, radius * 1.43, 32]} />
+          <meshBasicMaterial
+            color={selected ? "#fff4c8" : "#f2ca58"}
+            transparent
+            opacity={selected ? 0.82 : 0.58}
+            depthWrite={false}
+          />
+        </mesh>
+      )}
       <mesh castShadow receiveShadow position={[0, height / 2, 0]}>
         <cylinderGeometry
           args={[radius, radius, height, piece.sides, 1, false]}
@@ -314,7 +378,11 @@ function TowerMesh({
       </mesh>
       <mesh position={[0, 0.012, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[radius * 1.08, radius * 1.16, piece.sides]} />
-        <meshBasicMaterial color={accent} transparent opacity={ghost ? 0.34 : 0.72} />
+        <meshBasicMaterial
+          color={interactiveAffordance ? "#fff1b7" : accent}
+          transparent
+          opacity={ghost ? 0.34 : interactiveAffordance ? 0.95 : 0.72}
+        />
       </mesh>
     </group>
   );
@@ -329,8 +397,11 @@ function CellDropTarget({
   selected,
   startRow,
   dragging,
+  hoverEnabled,
   onHover,
-  onPointerUp,
+  onDragMove,
+  onDragEnd,
+  onCellTap,
 }: {
   boardId: BoardId;
   position: Position;
@@ -340,8 +411,21 @@ function CellDropTarget({
   selected: boolean;
   startRow: boolean;
   dragging: boolean;
+  hoverEnabled: boolean;
   onHover: (cell: HoveredCell | null) => void;
-  onPointerUp: () => void;
+  onDragMove: (
+    event: ThreeEvent<PointerEvent>,
+    cell: HoveredCell | null,
+  ) => void;
+  onDragEnd: (
+    event: ThreeEvent<PointerEvent>,
+    cell: HoveredCell | null,
+  ) => void;
+  onCellTap: (
+    boardId: BoardId,
+    position: Position,
+    piece: PlacedTower | null,
+  ) => void;
 }) {
   const color = frozen
     ? "#9da3aa"
@@ -368,19 +452,26 @@ function CellDropTarget({
         position={[0, 0.05, 0]}
         userData={{ boardId, position, piece }}
         onPointerOver={(event) => {
-          if (!dragging) return;
+          if (!hoverEnabled) return;
           event.stopPropagation();
           onHover({ boardId, position });
         }}
         onPointerMove={(event) => {
-          if (!dragging) return;
+          if (!hoverEnabled) return;
           event.stopPropagation();
           onHover({ boardId, position });
+          if (dragging) {
+            onDragMove(event, { boardId, position });
+          }
         }}
         onPointerUp={(event) => {
           event.stopPropagation();
-          onHover({ boardId, position });
-          onPointerUp();
+          if (dragging) {
+            onHover({ boardId, position });
+            onDragEnd(event, { boardId, position });
+            return;
+          }
+          onCellTap(boardId, position, piece);
         }}
       >
         <boxGeometry args={[CELL_WORLD_SIZE * 1.18, 0.024, CELL_WORLD_SIZE * 1.18]} />
@@ -397,12 +488,20 @@ function BoardMesh({
   highlighted,
   selected,
   hoveredCell,
+  hoveredPieceKey,
   drag,
+  ghostPiece,
   interactive,
+  hoverPreviewEnabled,
+  boardPiecesInteractive,
+  controlSlot,
   focusedBoardId,
   perspectiveSlot,
   onHover,
-  onPointerUp,
+  onPieceHover,
+  onDragMove,
+  onDragEnd,
+  onCellTap,
   onPieceDragStart,
 }: {
   boardId: BoardId;
@@ -411,12 +510,30 @@ function BoardMesh({
   highlighted: Position[];
   selected: { boardId: BoardId; position: Position } | null;
   hoveredCell: HoveredCell | null;
+  hoveredPieceKey: string | null;
   drag: DragIntent | null;
+  ghostPiece: DragIntent | null;
   interactive: boolean;
+  hoverPreviewEnabled: boolean;
+  boardPiecesInteractive: boolean;
+  controlSlot: PlayerSlot | null;
   focusedBoardId: BoardId | null;
   perspectiveSlot: PlayerSlot;
   onHover: (cell: HoveredCell | null) => void;
-  onPointerUp: () => void;
+  onPieceHover: (pieceKey: string | null) => void;
+  onDragMove: (
+    event: ThreeEvent<PointerEvent>,
+    cell: HoveredCell | null,
+  ) => void;
+  onDragEnd: (
+    event: ThreeEvent<PointerEvent>,
+    cell: HoveredCell | null,
+  ) => void;
+  onCellTap: (
+    boardId: BoardId,
+    position: Position,
+    piece: PlacedTower | null,
+  ) => void;
   onPieceDragStart: (
     event: ThreeEvent<PointerEvent>,
     boardId: BoardId,
@@ -470,6 +587,13 @@ function BoardMesh({
           const isHovered =
             hoveredCell?.boardId === boardId &&
             samePosition(hoveredCell.position, position);
+          const currentPieceKey = boardPieceKey(boardId, position);
+          const pieceInteractive =
+            interactive &&
+            boardPiecesInteractive &&
+            !frozen &&
+            (controlSlot === null || piece?.ownerSlot === controlSlot);
+          const isPieceHovered = hoveredPieceKey === currentPieceKey;
 
           return (
             <group key={`${rowIndex}-${colIndex}`}>
@@ -482,21 +606,43 @@ function BoardMesh({
                 selected={isSelected}
                 startRow={isStart}
                 dragging={drag !== null}
+                hoverEnabled={hoverPreviewEnabled}
                 onHover={onHover}
-                onPointerUp={onPointerUp}
+                onDragMove={onDragMove}
+                onDragEnd={onDragEnd}
+                onCellTap={onCellTap}
               />
               {piece && (
                 <group
                   position={cellPosition(position)}
                   scale={layout.pieceScale}
+                  userData={{ boardId, position, piece }}
                 >
                   <TowerMesh
                     piece={piece}
                     slot={piece.ownerSlot}
+                    hovered={pieceInteractive && isPieceHovered}
+                    selected={isSelected}
                     onPointerDown={
-                      interactive
+                      pieceInteractive
                         ? (event) =>
                             onPieceDragStart(event, boardId, position, piece)
+                        : undefined
+                    }
+                    onPointerOver={
+                      pieceInteractive && !drag
+                        ? (event) => {
+                            event.stopPropagation();
+                            onPieceHover(currentPieceKey);
+                          }
+                        : undefined
+                    }
+                    onPointerOut={
+                      pieceInteractive
+                        ? (event) => {
+                            event.stopPropagation();
+                            onPieceHover(null);
+                          }
                         : undefined
                     }
                   />
@@ -506,11 +652,17 @@ function BoardMesh({
           );
         }),
       )}
-      {drag && hoveredCell?.boardId === boardId && (
+      {ghostPiece && hoveredCell?.boardId === boardId && (
         <group position={cellPosition(hoveredCell.position)}>
           <TowerMesh
-            piece={drag.kind === "reserve" ? drag.tower : drag.piece}
-            slot={drag.kind === "reserve" ? drag.slot : drag.piece.ownerSlot}
+            piece={
+              ghostPiece.kind === "reserve" ? ghostPiece.tower : ghostPiece.piece
+            }
+            slot={
+              ghostPiece.kind === "reserve"
+                ? ghostPiece.slot
+                : ghostPiece.piece.ownerSlot
+            }
             ghost
           />
         </group>
@@ -525,6 +677,9 @@ function ReserveHand({
   reserves,
   active,
   interactive,
+  selectedTower,
+  hoveredPieceKey,
+  onPieceHover,
   onReserveDragStart,
 }: {
   slot: PlayerSlot;
@@ -532,6 +687,9 @@ function ReserveHand({
   reserves: TowerSpec[];
   active: boolean;
   interactive: boolean;
+  selectedTower: TowerSpec | null;
+  hoveredPieceKey: string | null;
+  onPieceHover: (pieceKey: string | null) => void;
   onReserveDragStart: (
     event: ThreeEvent<PointerEvent>,
     tower: TowerSpec,
@@ -575,26 +733,52 @@ function ReserveHand({
           <meshBasicMaterial color="#d9bb62" transparent opacity={0.26} />
         </mesh>
       ))}
-      {handPieces.map(({ tower, sourceIndex, position, scale }) => (
-        <group
-          key={`${towerKey(tower)}-${sourceIndex}`}
-          position={position}
-          scale={scale}
-        >
-          <mesh
-            position={[0, 0.04, 0]}
+      {handPieces.map(({ tower, sourceIndex, position, scale }) => {
+        const currentPieceKey = reservePieceKey(slot, tower, sourceIndex);
+        const isHovered = hoveredPieceKey === currentPieceKey;
+        const isSelected =
+          selectedTower !== null && sameTower(selectedTower, tower);
+
+        return (
+          <group
+            key={`${towerKey(tower)}-${sourceIndex}`}
+            position={position}
+            scale={scale}
             onPointerDown={
               interactive
                 ? (event) => onReserveDragStart(event, tower, slot)
                 : undefined
             }
+            onPointerOver={
+              interactive
+                ? (event) => {
+                    event.stopPropagation();
+                    onPieceHover(currentPieceKey);
+                  }
+                : undefined
+            }
+            onPointerOut={
+              interactive
+                ? (event) => {
+                    event.stopPropagation();
+                    onPieceHover(null);
+                  }
+                : undefined
+            }
           >
-            <cylinderGeometry args={[0.34, 0.34, 0.08, tower.sides]} />
-            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-          </mesh>
-          <TowerMesh piece={tower} slot={slot} />
-        </group>
-      ))}
+            <mesh position={[0, 0.04, 0]}>
+              <cylinderGeometry args={[0.34, 0.34, 0.08, tower.sides]} />
+              <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+            </mesh>
+            <TowerMesh
+              piece={tower}
+              slot={slot}
+              hovered={interactive && isHovered}
+              selected={isSelected}
+            />
+          </group>
+        );
+      })}
     </group>
   );
 }
@@ -694,16 +878,21 @@ export function GameTableCanvas({
   capturedBySlot = [[], [], []],
   highlightByBoard = {},
   selected,
+  selectedReserveTower = null,
   pending = false,
   statusText = "Talat table",
+  boardPiecesInteractive = interactive,
   onReserveDrop,
+  onReserveSelect,
   onPieceDrop,
   onPieceSelect,
+  onCellTap,
 }: GameTableCanvasProps) {
   const [drag, setDrag] = useState<DragIntent | null>(null);
   const [hoveredCell, setHoveredCell] = useState<HoveredCell | null>(null);
+  const [hoveredPieceKey, setHoveredPieceKey] = useState<string | null>(null);
   const committedDropRef = useRef(false);
-  const focusedBoardId = selected?.boardId ?? hoveredCell?.boardId ?? null;
+  const activePointerRef = useRef<ActivePointer | null>(null);
   const perspectiveSlot = controlSlot ?? 0;
   const includeReserveHand = controlSlot !== null && setupReserves.length > 0;
   const boardRenderOrder = useMemo(
@@ -711,6 +900,28 @@ export function GameTableCanvas({
     [perspectiveSlot],
   );
   const woodTexture = useMemo(() => makeWoodTexture(), []);
+  const selectedGhost = useMemo<DragIntent | null>(() => {
+    if (selectedReserveTower && controlSlot !== null) {
+      return { kind: "reserve", tower: selectedReserveTower, slot: controlSlot };
+    }
+
+    if (!selected) return null;
+
+    const piece =
+      boards[selected.boardId][selected.position.row][selected.position.col];
+    if (!piece) return null;
+
+    return {
+      kind: "piece",
+      boardId: selected.boardId,
+      position: selected.position,
+      piece,
+    };
+  }, [boards, controlSlot, selected, selectedReserveTower]);
+  const ghostPiece = drag ?? selectedGhost;
+  const hoverPreviewEnabled = interactive && ghostPiece !== null;
+  const activeHoveredCell = ghostPiece ? hoveredCell : null;
+  const focusedBoardId = selected?.boardId ?? activeHoveredCell?.boardId ?? null;
 
   const commitDrop = useCallback(
     (cell = hoveredCell) => {
@@ -735,6 +946,44 @@ export function GameTableCanvas({
     [drag, hoveredCell, onPieceDrop, onReserveDrop],
   );
 
+  const beginPointerAction = useCallback((event: ThreeEvent<PointerEvent>) => {
+    activePointerRef.current = {
+      pointerId: event.pointerId,
+      startX: event.nativeEvent.clientX,
+      startY: event.nativeEvent.clientY,
+      moved: false,
+    };
+  }, []);
+
+  const markPointerMove = useCallback((event: ThreeEvent<PointerEvent>) => {
+    const activePointer = activePointerRef.current;
+    if (!activePointer || activePointer.pointerId !== event.pointerId) return;
+
+    const deltaX = event.nativeEvent.clientX - activePointer.startX;
+    const deltaY = event.nativeEvent.clientY - activePointer.startY;
+    if (Math.hypot(deltaX, deltaY) >= TAP_MOVE_THRESHOLD) {
+      activePointer.moved = true;
+    }
+  }, []);
+
+  const endPointerDrag = useCallback(
+    (event: ThreeEvent<PointerEvent>, cell: HoveredCell | null) => {
+      const wasTap =
+        activePointerRef.current?.pointerId === event.pointerId &&
+        !activePointerRef.current.moved;
+      activePointerRef.current = null;
+
+      if (wasTap) {
+        setDrag(null);
+        setHoveredCell(null);
+        return;
+      }
+
+      commitDrop(cell);
+    },
+    [commitDrop],
+  );
+
   const startCapture = useCallback((event: ThreeEvent<PointerEvent>) => {
     const target = event.target as Element;
     if ("setPointerCapture" in target) {
@@ -743,7 +992,18 @@ export function GameTableCanvas({
   }, []);
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-md bg-[#130d09]">
+    <div
+      className="relative h-full w-full overflow-hidden rounded-md bg-[#130d09]"
+      style={{
+        cursor: drag
+          ? "grabbing"
+          : hoveredPieceKey
+            ? "pointer"
+            : interactive
+              ? "default"
+              : "auto",
+      }}
+    >
       <p className="sr-only" aria-live="polite">
         {statusText}
       </p>
@@ -768,13 +1028,16 @@ export function GameTableCanvas({
         <pointLight position={[3.8, 2.2, 2.5]} intensity={20} distance={12} />
         <group
           onPointerMove={(event) => {
-            if (!drag) return;
+            if (!drag && !hoverPreviewEnabled) return;
+            if (drag) {
+              markPointerMove(event);
+            }
             setHoveredCell(readCellFromEvent(event));
           }}
           onPointerUp={(event) => {
             if (!drag) return;
             const cell = readCellFromEvent(event);
-            commitDrop(cell);
+            endPointerDrag(event, cell);
           }}
         >
           <mesh receiveShadow position={[0, -0.12, 0]}>
@@ -799,19 +1062,34 @@ export function GameTableCanvas({
               frozenBoards={frozenBoards}
               highlighted={highlightByBoard[boardId] ?? []}
               selected={selected ?? null}
-              hoveredCell={hoveredCell}
+              hoveredPieceKey={hoveredPieceKey}
+              hoveredCell={activeHoveredCell}
               drag={drag}
+              ghostPiece={ghostPiece}
               interactive={interactive}
+              hoverPreviewEnabled={hoverPreviewEnabled}
+              boardPiecesInteractive={boardPiecesInteractive}
+              controlSlot={controlSlot}
               focusedBoardId={focusedBoardId}
               perspectiveSlot={perspectiveSlot}
               onHover={setHoveredCell}
-              onPointerUp={commitDrop}
+              onPieceHover={setHoveredPieceKey}
+              onDragMove={(event, cell) => {
+                markPointerMove(event);
+                setHoveredCell(cell);
+              }}
+              onDragEnd={endPointerDrag}
+              onCellTap={(tapBoardId, position, piece) => {
+                onCellTap?.(tapBoardId, position, piece);
+              }}
               onPieceDragStart={(event, dragBoardId, position, piece) => {
                 event.stopPropagation();
                 if (!interactive) return;
                 startCapture(event);
+                beginPointerAction(event);
                 committedDropRef.current = false;
                 onPieceSelect?.(dragBoardId, position, piece);
+                setHoveredPieceKey(null);
                 setDrag({
                   kind: "piece",
                   boardId: dragBoardId,
@@ -828,10 +1106,16 @@ export function GameTableCanvas({
               reserves={setupReserves}
               active={interactive}
               interactive={interactive}
+              selectedTower={selectedReserveTower}
+              hoveredPieceKey={hoveredPieceKey}
+              onPieceHover={setHoveredPieceKey}
               onReserveDragStart={(event, tower, slot) => {
                 event.stopPropagation();
                 startCapture(event);
+                beginPointerAction(event);
                 committedDropRef.current = false;
+                onReserveSelect?.(tower);
+                setHoveredPieceKey(null);
                 setDrag({ kind: "reserve", tower, slot });
               }}
             />

@@ -46,6 +46,7 @@ export const TABLE_LAYOUT_RULES = {
   cameraPaddingX: 0.58,
   cameraPaddingZ: 0.86,
   cameraDepthScale: 0.84,
+  cameraZoomScale: 0.78,
 } as const;
 
 export const TABLE_ACCESSORY_SIZES = {
@@ -470,12 +471,13 @@ export function resolveWarTableFrame(
     0.08,
     (bounds.minZ + bounds.maxZ) / 2 + 0.18,
   ];
-  const viewWidth = Math.max(
-    footprintWidth + TABLE_LAYOUT_RULES.cameraPaddingX,
-    (footprintDepth + TABLE_LAYOUT_RULES.cameraPaddingZ) *
-      aspect *
-      TABLE_LAYOUT_RULES.cameraDepthScale,
-  );
+  const viewWidth =
+    Math.max(
+      footprintWidth + TABLE_LAYOUT_RULES.cameraPaddingX,
+      (footprintDepth + TABLE_LAYOUT_RULES.cameraPaddingZ) *
+        aspect *
+        TABLE_LAYOUT_RULES.cameraDepthScale,
+    ) * TABLE_LAYOUT_RULES.cameraZoomScale;
 
   return {
     kind: "orthographic",

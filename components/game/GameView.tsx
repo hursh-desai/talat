@@ -47,7 +47,10 @@ type GameViewProps = {
   winnerSlot: number | null;
 };
 
-type Selection = { kind: "play"; boardId: BoardId; position: Position } | null;
+type Selection =
+  | { kind: "setup"; tower: TowerSpec }
+  | { kind: "play"; boardId: BoardId; position: Position }
+  | null;
 
 type GameLogEvent = {
   _id: Id<"gameEvents">;
@@ -262,7 +265,11 @@ export function GameView({
     const result: Partial<Record<BoardId, Position[]>> = {};
 
     if (status === "setup") {
+      const selectedTower =
+        selection?.kind === "setup" ? selection.tower : null;
+
       for (const action of validSetupActions) {
+        if (selectedTower && !sameTower(action.tower, selectedTower)) continue;
         result[action.boardId] = [
           ...(result[action.boardId] ?? []),
           action.position,
@@ -535,6 +542,14 @@ export function GameView({
     ],
   );
 
+  const handleReserveSelect = useCallback(
+    (tower: TowerSpec) => {
+      if (status !== "setup" || controlSlot === null || !isMyTurn) return;
+      setSelection({ kind: "setup", tower });
+    },
+    [controlSlot, isMyTurn, status],
+  );
+
   const handlePieceSelect = useCallback(
     (boardId: BoardId, position: Position, piece: PlacedTower) => {
       if (status !== "playing" || controlSlot === null) return;
@@ -542,6 +557,66 @@ export function GameView({
       setSelection({ kind: "play", boardId, position });
     },
     [controlSlot, isMyTurn, status],
+  );
+
+  const handleCellTap = useCallback(
+    (boardId: BoardId, position: Position, piece: PlacedTower | null) => {
+      if (interactionLocked || controlSlot === null || !isMyTurn) return;
+
+      if (status === "setup") {
+        if (selection?.kind !== "setup") return;
+        void submitSetupDrop(selection.tower, boardId, position);
+        return;
+      }
+
+      if (status !== "playing") return;
+
+      if (selection?.kind === "play") {
+        const selectedPiece =
+          playState?.boardState.boards[selection.boardId][selection.position.row][
+            selection.position.col
+          ] ?? null;
+        const valid = validPlayActions.some(
+          (action) =>
+            action.boardId === selection.boardId &&
+            samePosition(action.from, selection.position) &&
+            action.boardId === boardId &&
+            samePosition(action.to, position),
+        );
+
+        if (selectedPiece && valid) {
+          void submitMoveDrop(
+            selection.boardId,
+            selection.position,
+            position,
+            selectedPiece,
+          );
+          return;
+        }
+      }
+
+      if (
+        piece &&
+        piece.ownerSlot === controlSlot &&
+        validPlayActions.some(
+          (action) =>
+            action.boardId === boardId && samePosition(action.from, position),
+        )
+      ) {
+        setSelection({ kind: "play", boardId, position });
+      }
+    },
+    [
+      controlSlot,
+      interactionLocked,
+      isMyTurn,
+      playState,
+      selection,
+      status,
+      submitMoveDrop,
+      submitSetupDrop,
+      validPlayActions,
+    ],
   );
 
   if (status === "waiting") {
@@ -585,11 +660,17 @@ export function GameView({
               ? { boardId: selection.boardId, position: selection.position }
               : null
           }
+          selectedReserveTower={
+            selection?.kind === "setup" ? selection.tower : null
+          }
           pending={interactionLocked}
           statusText={statusText}
+          boardPiecesInteractive={status === "playing"}
           onReserveDrop={submitSetupDrop}
+          onReserveSelect={handleReserveSelect}
           onPieceDrop={submitMoveDrop}
           onPieceSelect={handlePieceSelect}
+          onCellTap={handleCellTap}
         />
       </section>
 
