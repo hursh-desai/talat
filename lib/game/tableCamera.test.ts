@@ -299,6 +299,7 @@ describe("war table camera model", () => {
       const defaultLeft = boardRimBounds(leftBoard, slot);
       const defaultRight = boardRimBounds(rightBoard, slot);
       const defaultFront = boardRimBounds(frontBoard, slot);
+      const defaultFrontLayout = boardLayoutForFocus(frontBoard, null, slot);
       const mobileLeft = boardRimBounds(
         leftBoard,
         slot,
@@ -317,15 +318,57 @@ describe("war table camera model", () => {
         null,
         mobileLayoutMode,
       );
+      const mobileFrontLayout = boardLayoutForFocus(
+        frontBoard,
+        null,
+        slot,
+        mobileLayoutMode,
+      );
 
       expect(mobileRight.minX - mobileLeft.maxX).toBeLessThan(
         defaultRight.minX - defaultLeft.maxX,
+      );
+      expect(mobileFrontLayout.position[2]).toBeGreaterThan(
+        defaultFrontLayout.position[2],
       );
       expect(mobileFront.minZ - mobileLeft.maxZ).toBeGreaterThan(
         defaultFront.minZ - defaultLeft.maxZ,
       );
       expect(mobileFront.minZ - mobileRight.maxZ).toBeGreaterThan(
         defaultFront.minZ - defaultRight.maxZ,
+      );
+    }
+  });
+
+  it("keeps the mobile near score rack inside the front board width", () => {
+    const mobileLayoutMode = tableLayoutModeForAspect(VIEWPORTS.tallMobile);
+    const rackSize = TABLE_ACCESSORY_SIZES.captureRack;
+
+    for (const perspectiveSlot of PLAYER_SLOTS) {
+      const [, , frontBoard] = boardRenderOrderForPerspective(perspectiveSlot);
+      const front = boardRimBounds(
+        frontBoard,
+        perspectiveSlot,
+        null,
+        mobileLayoutMode,
+      );
+      const nearRack = boxBounds(
+        new THREE.Vector3(
+          ...captureRackPosition(
+            perspectiveSlot,
+            perspectiveSlot,
+            null,
+            mobileLayoutMode,
+          ),
+        ),
+        rackSize.width,
+        rackSize.depth,
+      );
+
+      expect(nearRack.maxX).toBeLessThan(front.maxX);
+      expect(nearRack.minX).toBeGreaterThan(front.minX);
+      expect(nearRack.minZ - front.maxZ).toBeGreaterThanOrEqual(
+        TABLE_LAYOUT_RULES.captureRackGutter - 0.001,
       );
     }
   });

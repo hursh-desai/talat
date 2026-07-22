@@ -39,6 +39,7 @@ type BoardStationSpec = Omit<BoardLayoutBase, "position"> & { y: number };
 
 export const TABLE_LAYOUT_RULES = {
   frontCenter: [0.02, 1.24],
+  frontNearOffsetZ: 0,
   sideToFrontGutter: 0.96,
   sideInnerGutter: 0.86,
   reserveHandGutter: 0.62,
@@ -53,8 +54,10 @@ const MOBILE_TALL_MAX_ASPECT = 0.68;
 
 const MOBILE_TALL_TABLE_LAYOUT_RULES = {
   ...TABLE_LAYOUT_RULES,
-  sideToFrontGutter: 1.54,
-  sideInnerGutter: 0.34,
+  frontNearOffsetZ: 0.76,
+  sideToFrontGutter: 1.3,
+  sideInnerGutter: -0.12,
+  cameraZoomScale: 0.94,
 } as const;
 
 export type TableLayoutMode = "default" | "mobileTall";
@@ -124,8 +127,10 @@ function computeStationLayout(
   const frontBounds = rimBoundsForStation(front);
   const leftBounds = rimBoundsForStation(left);
   const rightBounds = rimBoundsForStation(right);
-  const [frontX, frontZ] = rules.frontCenter;
-  const sideNearEdge = frontZ + frontBounds.minZ - rules.sideToFrontGutter;
+  const [frontX, baseFrontZ] = rules.frontCenter;
+  const frontZ = baseFrontZ + rules.frontNearOffsetZ;
+  const sideNearEdge =
+    baseFrontZ + frontBounds.minZ - rules.sideToFrontGutter;
 
   return {
     front: {
@@ -367,6 +372,15 @@ export function captureRackPosition(
       perspectiveSlot,
       layoutMode,
     );
+
+    if (layoutMode === "mobileTall") {
+      return [
+        bounds.maxX - rack.width / 2 - 0.18,
+        0.05,
+        bounds.maxZ + rack.depth / 2 + TABLE_LAYOUT_RULES.captureRackGutter,
+      ];
+    }
+
     return [
       bounds.maxX + rack.width / 2 + TABLE_LAYOUT_RULES.captureRackGutter,
       0.05,
@@ -535,6 +549,7 @@ export function resolveWarTableFrame(
   } = {},
 ): CameraFrame {
   const layoutMode = tableLayoutModeForAspect(aspect);
+  const rules = tableLayoutRulesForMode(layoutMode);
   const bounds = boundsFor(
     [
       ...battlefieldRimCorners(focusedBoardId, perspectiveSlot, layoutMode),
@@ -554,11 +569,11 @@ export function resolveWarTableFrame(
   ];
   const viewWidth =
     Math.max(
-      footprintWidth + TABLE_LAYOUT_RULES.cameraPaddingX,
-      (footprintDepth + TABLE_LAYOUT_RULES.cameraPaddingZ) *
+      footprintWidth + rules.cameraPaddingX,
+      (footprintDepth + rules.cameraPaddingZ) *
         aspect *
-        TABLE_LAYOUT_RULES.cameraDepthScale,
-    ) * TABLE_LAYOUT_RULES.cameraZoomScale;
+        rules.cameraDepthScale,
+    ) * rules.cameraZoomScale;
 
   return {
     kind: "orthographic",
